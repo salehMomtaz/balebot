@@ -4,7 +4,7 @@ import time
 import asyncio
 import shutil
 import logging
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.client.session.aiohttp import AiohttpSession
 import config

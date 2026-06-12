@@ -8,8 +8,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, 
     InlineKeyboardButton,
     TelegramObject,
-    ForceReply,
-    FSInputFile
+    ForceReply
 )
 import config
 from utils.gate import (
@@ -212,7 +211,7 @@ async def admin_state_message_handler(message: Message, bot: Bot):
 @admin_router.message(
     F.text, 
     F.chat.type == "private",
-    lambda message: not is_link(message.text.strip().split("|")[0].strip()) # CRITICAL: Exclude links from matching standard router
+    lambda message: not message.text.strip().split("|")[0].strip().startswith("http")
 )
 async def admin_start_text_handler(message: Message):
     text = message.text.strip()
