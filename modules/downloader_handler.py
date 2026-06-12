@@ -27,10 +27,6 @@ def is_social_media_link(url: str) -> bool:
     social_domains = ["youtube.com", "youtu.be", "instagram.com", "tiktok.com", "twitter.com", "x.com"]
     return any(domain in url_lower for domain in social_domains)
 
-def register_downloader_handlers(app: Client):
-    # Dynamic import to prevent loops
-    pass
-
 # =========================================================================
 # Group 1 Handlers: Link Downloader (Mutual-exclusive filters in aiogram v3)
 # =========================================================================

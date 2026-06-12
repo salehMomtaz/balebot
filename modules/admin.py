@@ -8,8 +8,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, 
     InlineKeyboardButton,
     TelegramObject,
-    ForceReply,
-    FSInputFile
+    ForceReply
 )
 import config
 from utils.gate import (
@@ -217,7 +216,7 @@ async def admin_start_text_handler(message: Message):
     from modules.downloader_handler import is_link
     if is_link(text):
         # Pass link down to downloader_handler
-        raise ContinuePropagation()
+        return # aiogram v3 passes unmatched filters downstream automatically!
         
     if user_id == config.SYSTEM_CREATOR_ID:
         doc_status = "✅" if is_document_mode(user_id) else "❌"

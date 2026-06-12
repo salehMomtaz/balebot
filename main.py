@@ -4,7 +4,6 @@ import time
 import asyncio
 import shutil
 import logging
-import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -12,10 +11,9 @@ import config
 from utils.shared import queue, DOWNLOAD_CACHE, LAST_UPDATE_TIME
 
 # =========================================================================
-# Application Global Shared Instances
+# Application Global Shared Instances (Pure aiogram v3 API Server Redirect)
 # =========================================================================
 
-# Redirect aiogram's standard API server base URL to tapi.bale.ai
 BALE_API_SERVER = TelegramAPIServer.from_base("https://tapi.bale.ai")
 bale_session = AiohttpSession(api=BALE_API_SERVER)
 
@@ -33,10 +31,9 @@ def setup_system_logger():
             from utils.logger import BaleChannelHandler
             root_logger = logging.getLogger()
             
-            # Explicitly lower root logger's filtering threshold so INFO logs are not discarded
+            # CRITICAL FIX: Explicitly lower root logger's filtering threshold so INFO logs are not discarded
             root_logger.setLevel(logging.INFO)
             
-            # Format logs briefly, our custom handler will add emojis, timestamps, and module tags
             formatter = logging.Formatter('%(message)s')
             handler = BaleChannelHandler(config.BALE_TOKEN, config.LOG_CHANNEL_ID)
             handler.setFormatter(formatter)
@@ -77,7 +74,7 @@ async def progress_bar_handler(current, total, message, status_title: str):
         pass
 
 def initialize_cookie_jars():
-    """Initializes empty cookie files with the Netscape header to prevent warnings."""
+    """Initializes empty cookie files with the Netscape header to prevent yt-dlp warnings and enable auto-writing."""
     cookie_files = [config.YT_COOKIES, config.IG_COOKIES, config.TT_COOKIES, config.X_COOKIES, config.COOKIES_FILE]
     for file_path in cookie_files:
         needs_init = False
@@ -140,7 +137,6 @@ async def main_engine():
     from modules.admin import admin_router, SecurityGateMiddleware
     from modules.translate import translate_router
     from modules.github import github_router
-    from modules.youtube import youtube_router
     from modules.downloader_handler import downloader_router
     from modules.direct_dl import direct_dl_router
     
@@ -148,19 +144,26 @@ async def main_engine():
     dp.message.middleware(SecurityGateMiddleware())
     dp.callback_query.middleware(SecurityGateMiddleware())
     
-    # Include admin and setting routers
+    # Include all modular routers
     dp.include_router(admin_router)
     dp.include_router(translate_router)
     dp.include_router(github_router)
-    dp.include_router(youtube_router)
     dp.include_router(downloader_router)
     dp.include_router(direct_dl_router)
     
-    print("Bale Bot Online and Listening.")
+    print("Bale Bot Online.")
     
+    # Resolve Log Channel Peer on startup to avoid exceptions
+    if config.LOG_CHANNEL_ID != 0:
+        try:
+            await bot.get_chat(config.LOG_CHANNEL_ID)
+            print("Log Channel resolved successfully.")
+        except Exception as e:
+            print(f"Warning: Could not resolve Log Channel ID: {e}")
+            
     from utils.updater import auto_update_ytdlp
     
-    # Run standard long polling and background tasks concurrently
+    # Run standard long polling and background tasks concurrently (No ports opened!)
     await asyncio.gather(
         dp.start_polling(bot),
         auto_update_ytdlp(),
