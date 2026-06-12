@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  balebot:
+    build: .
+    container_name: bale_bot
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - .:/app
+      - /etc/letsencrypt:/etc/letsencrypt:ro  # Mount SSL certificates as read-only
+    environment:
+      - PYTHONUNBUFFERED=1

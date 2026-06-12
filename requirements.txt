@@ -1,0 +1,10 @@
+aiogram==3.12.0
+tgcrypto
+fastapi
+uvicorn
+yt-dlp[default]
+ffmpeg-python
+aiohttp
+aiofiles
+apscheduler
+requests
