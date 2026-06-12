@@ -141,6 +141,7 @@ async def main_engine():
     from modules.translate import translate_router
     from modules.github import github_router
     from modules.youtube import youtube_router
+    from modules.downloader_handler import downloader_router
     
     # Register our customized security middleware on both messages and callback query streams
     dp.message.middleware(SecurityGateMiddleware())
@@ -151,6 +152,7 @@ async def main_engine():
     dp.include_router(translate_router)
     dp.include_router(github_router)
     dp.include_router(youtube_router)
+    dp.include_router(downloader_router)
     
     print("Bale Bot Online and Listening.")
     

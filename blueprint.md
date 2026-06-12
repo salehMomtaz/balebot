@@ -19,13 +19,13 @@ balebot/
 ├── ttcookies.txt          # TikTok cookies
 ├── xcookies.txt           # X/Twitter cookies
 ├── cookies.txt            # Fallback global cookies
-├── main.py                # [UPDATED] Bootloader registering youtube, github, translate, and admin routers
+├── main.py                # [UPDATED] Bootloader registering downloader, github, translate, and admin routers
 └── utils/
     ├── __init__.py
     ├── gate.py            # Whitelist & Settings database handlers
     ├── downloader.py      # yt-dlp with 48MB chunk splitter
     ├── id_validator.py    # Handles digit checks and Telegram ID boundary verification
-    ├── uploader.py        # 48MB sequential split uploader
+    ├── uploader.py        # [ADDED] 48MB sequential split uploader with visual previews
     ├── shared.py          # Globally shared queue and database cache registries
     └── logger.py          # Standalone logging handler (Piping root logs to Bale)
 └── modules/
@@ -33,7 +33,8 @@ balebot/
     ├── admin.py           # Secure Admin Console (aiogram v3 middleware and router)
     ├── github.py          # Direct async GitHub cloner, branches, commits, & release explorer
     ├── translate.py       # Direct async Google Translate engine (/tr command)
-    ├── youtube.py         # [ADDED] YouTube keyless search, recent channel uploads, channel search, and zero-bandwidth subtitle cleaners (/transcript)
+    ├── youtube.py         # YouTube download, search, & transcripts
+    ├── downloader_handler.py # [ADDED] Link and direct file URL queue worker (Adapted for Bale and 48MB caps)
     └── direct_dl.py       # Direct URL downloader & webpage text extractor
 ```
 
@@ -41,7 +42,8 @@ balebot/
 - [x] **Phase 1: Project Setup & Environment Configurations**
 - [x] **Phase 2: Core Bootloader & API Redirects**
 - [x] **Phase 3: Bale Bot Admin Console & Input Validator**
-- [x] **Phase 4: Google Translate Module** (Direct async translation engine written in `modules/translate.py` and registered in `main.py` [1.1.2])
-- [x] **Phase 5: GitHub Assistant Module** (Direct async repository cloner, zip installer, commits, and branch explorer written in `modules/github.py` and registered in `main.py` [1.1.2])
-- [x] **Phase 6: YouTube Assistant Module** (YouTube keyless searches, channel queries, and raw transcript text document builders written in `modules/youtube.py` and registered in `main.py` [1.1.1, 1.1.2])
-- [ ] **Phase 7: Downloader Handler Module (Format grids, URL/Filename overrides)**
+- [x] **Phase 4: Google Translate Module**
+- [x] **Phase 5: GitHub Assistant Module**
+- [x] **Phase 6: YouTube Assistant Module**
+- [x] **Phase 7: Downloader Handler Module** (Format selection callback, mutually exclusive regex links, 48MB splits, and sequential upload purges written in `modules/downloader_handler.py` and `utils/uploader.py` [1.1.1, 1.1.2])
+- [ ] **Phase 8: Direct URL Webpage Text Extractor Module**
