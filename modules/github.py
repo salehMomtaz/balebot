@@ -60,8 +60,7 @@ async def fetch_github_api(url: str) -> dict:
 @github_router.message(
     F.text,
     F.chat.type == "private",
-    lambda message: REPO_REGEX.match(message.text.strip().split("|")[0].strip()) is not None,
-    group=1
+    lambda message: REPO_REGEX.match(message.text.strip().split("|")[0].strip()) is not None
 )
 async def github_repo_link_handler(message: Message):
     """Intercepts standard repository links and presents the control panel."""
@@ -96,8 +95,7 @@ async def github_repo_link_handler(message: Message):
 @github_router.message(
     F.text,
     F.chat.type == "private",
-    lambda message: SUB_REGEX.match(message.text.strip()) is not None,
-    group=1
+    lambda message: SUB_REGEX.match(message.text.strip()) is not None
 )
 async def github_sub_link_handler(message: Message):
     """Intercepts issues, pull requests, and discussions links directly."""
@@ -144,8 +142,7 @@ async def github_sub_link_handler(message: Message):
 @github_router.message(
     F.text,
     F.chat.type == "private",
-    lambda message: GIST_REGEX.match(message.text.strip()) is not None,
-    group=1
+    lambda message: GIST_REGEX.match(message.text.strip()) is not None
 )
 async def github_gist_link_handler(message: Message, bot: Bot):
     """Intercepts Gist links and delivers raw files directly."""

@@ -37,8 +37,7 @@ def register_downloader_handlers(app: Client):
 @downloader_router.message(
     F.text,
     F.chat.type == "private",
-    lambda message: is_link(message.text.strip().split("|")[0].strip()),
-    group=1
+    lambda message: is_link(message.text.strip().split("|")[0].strip())
 )
 async def text_link_handler(message: Message):
     text = message.text.strip()

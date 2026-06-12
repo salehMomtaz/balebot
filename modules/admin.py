@@ -88,8 +88,12 @@ async def purge_active_prompt(user_id: int, bot: Bot):
 # =========================================================================
 # 1. State Machine Handler (Processes text inputs ONLY if user is in an active state)
 # =========================================================================
-@admin_router.message(lambda msg: msg.from_user.id in USER_STATES)
-async def admin_state_message_handler(message: Message, bot: Bot):
+@admin_router.message(
+        F.text, 
+        filters.private, 
+        lambda message: message.from_user.id in USER_STATES
+    )
+async def admin_state_message_handler(client: Client, message: Message):
     # Import log_event dynamically inside scope to prevent circular imports
     from main import log_event
 
@@ -209,8 +213,8 @@ async def admin_state_message_handler(message: Message, bot: Bot):
 # =========================================================================
 # 2. Standard Private Text Router (Handles /start and console text triggers)
 # =========================================================================
-@admin_router.message(F.text, ~F.text.startswith("http"))
-async def admin_start_text_handler(message: Message):
+@admin_router.message(F.text, filters.private)
+async def admin_start_text_handler(client: Client, message: Message):
     text = message.text.strip()
     user_id = message.from_user.id
         
