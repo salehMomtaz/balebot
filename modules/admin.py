@@ -8,7 +8,8 @@ from aiogram.types import (
     InlineKeyboardMarkup, 
     InlineKeyboardButton,
     TelegramObject,
-    ForceReply
+    ForceReply,
+    FSInputFile
 )
 import config
 from utils.gate import (
@@ -208,15 +209,14 @@ async def admin_state_message_handler(message: Message, bot: Bot):
 # =========================================================================
 # 2. Standard Private Text Router (Handles /start and console text triggers)
 # =========================================================================
-@admin_router.message(F.text, F.chat.type == "private")
+@admin_router.message(
+    F.text, 
+    F.chat.type == "private",
+    lambda message: not is_link(message.text.strip().split("|")[0].strip()) # CRITICAL: Exclude links from matching standard router
+)
 async def admin_start_text_handler(message: Message):
     text = message.text.strip()
     user_id = message.from_user.id
-        
-    from modules.downloader_handler import is_link
-    if is_link(text):
-        # Pass link down to downloader_handler
-        return # aiogram v3 passes unmatched filters downstream automatically!
         
     if user_id == config.SYSTEM_CREATOR_ID:
         doc_status = "✅" if is_document_mode(user_id) else "❌"
@@ -359,7 +359,7 @@ async def admin_callback_handler(callback_query: CallbackQuery, bot: Bot):
         await callback_query.answer()
 
     # =========================================================================
-    # Cookies Sub-Menus Configuration
+    # Cookies Sub-Menus Configuration (With Safe try/except popup containment)
     # =========================================================================
     elif data == "admin_cookies_menu":
         USER_STATES.pop(user_id, None)
@@ -395,16 +395,19 @@ async def admin_callback_handler(callback_query: CallbackQuery, bot: Bot):
         
         if action == "download":
             if os.path.exists(file_path):
-                from aiogram.types import FSInputFile
-                await bot.send_document(
-                    chat_id=user_id,
-                    document=FSInputFile(file_path),
-                    caption=f"🍪 Here is your active `{cookie_key}.txt` file."
-                )
+                try:
+                    from aiogram.types import FSInputFile
+                    await bot.send_document(
+                        chat_id=user_id,
+                        document=FSInputFile(file_path),
+                        caption=f"🍪 Here is your active `{cookie_key}.txt` file."
+                    )
+                    await callback_query.answer("✅ Cookie file delivered!")
+                except Exception as ce:
+                    await callback_query.answer(f"❌ API Error: {str(ce)}", show_alert=True)
             else:
                 await callback_query.answer("⚠️ File is empty or does not exist on VPS yet.", show_alert=True)
-            await callback_query.answer()
-            
+                
         elif action == "replace":
             USER_STATES[user_id] = f"waiting_for_replace_{cookie_key}"
             ACTIVE_PROMPTS[user_id] = callback_query.message.message_id
