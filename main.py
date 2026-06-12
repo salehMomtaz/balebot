@@ -136,10 +136,9 @@ async def main_engine():
     # 2. Initialize and format cookie files
     initialize_cookie_jars()
     
-    # 3. Import, register, and bind modular routing and security middlewares
+    # 3. Import and register modular routing and security middlewares
     from modules.admin import admin_router, SecurityGateMiddleware
-    # from modules.downloader_handler import downloader_router
-    # ...
+    from modules.translate import translate_router  # Added
     
     # Register our customized security middleware on both messages and callback query streams
     dp.message.middleware(SecurityGateMiddleware())
@@ -147,6 +146,7 @@ async def main_engine():
     
     # Include admin and setting routers
     dp.include_router(admin_router)
+    dp.include_router(translate_router)  # Added
     
     print("Bale Bot Online and Listening.")
     

@@ -19,7 +19,7 @@ balebot/
 ├── ttcookies.txt          # TikTok cookies
 ├── xcookies.txt           # X/Twitter cookies
 ├── cookies.txt            # Fallback global cookies
-├── main.py                # [UPDATED] Bootloader with integrated Security middleware and routing
+├── main.py                # [UPDATED] Bootloader registering translation and admin routers
 └── utils/
     ├── __init__.py
     ├── gate.py            # Whitelist & Settings database handlers
@@ -30,9 +30,9 @@ balebot/
     └── logger.py          # Standalone logging handler (Piping root logs to Bale)
 └── modules/
     ├── __init__.py
-    ├── admin.py           # [ADDED] Secure Admin Console (aiogram v3 middleware and router)
+    ├── admin.py           # Secure Admin Console (aiogram v3 middleware and router)
     ├── github.py          # GitHub API cloner & repository browser
-    ├── translate.py       # Google Translate engine (/tr command)
+    ├── translate.py       # [ADDED] Direct async Google Translate engine (/tr command)
     ├── youtube.py         # YouTube download, search, & transcripts
     └── direct_dl.py       # Direct URL downloader & webpage text extractor
 ```
@@ -40,5 +40,6 @@ balebot/
 ## 🛠 Progress Log
 - [x] **Phase 1: Project Setup & Environment Configurations**
 - [x] **Phase 2: Core Bootloader & API Redirects**
-- [x] **Phase 3: Bale Bot Admin Console & Input Validator** (aiogram v3 security middleware, console router, and state validations written in `modules/admin.py` and updated in `main.py` [1.1.2])
-- [ ] **Phase 4: Google Translate & GitHub Assistant Modules**
+- [x] **Phase 3: Bale Bot Admin Console & Input Validator**
+- [x] **Phase 4: Google Translate Module** (Direct async translation engine written in `modules/translate.py` and registered in `main.py` [1.1.2])
+- [ ] **Phase 5: GitHub Assistant Module (Repository cloner and browser)**
