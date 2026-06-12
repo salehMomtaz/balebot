@@ -2,6 +2,7 @@
 import os
 import re
 import uuid
+import glob
 import asyncio
 from datetime import datetime, timedelta
 import aiohttp
@@ -23,7 +24,6 @@ from utils.uploader import process_split_and_upload
 github_router = Router()
 
 # In-memory dictionary to protect callback_data from exceeding 64 bytes
-# Structure: { "gh_abcd1234": { "owner": "...", "repo": "..." } }
 GITHUB_CACHE = {}
 
 # Regex compilers for clean URL capture
@@ -54,13 +54,13 @@ async def fetch_github_api(url: str) -> dict:
             return await response.json()
 
 # =========================================================================
-# Group 1 Handlers: Link Interceptors
+# Group 1 Handlers: Link Interceptors (Pure aiogram v3 Syntax)
 # =========================================================================
 
 @github_router.message(
-    filters.text & 
-    filters.private & 
-    filters.create(lambda _, __, m: REPO_REGEX.match(m.text.strip().split("|")[0].strip()) is not None),
+    F.text,
+    F.chat.type == "private",
+    lambda message: REPO_REGEX.match(message.text.strip().split("|")[0].strip()) is not None,
     group=1
 )
 async def github_repo_link_handler(message: Message):
@@ -94,9 +94,9 @@ async def github_repo_link_handler(message: Message):
     )
 
 @github_router.message(
-    filters.text & 
-    filters.private & 
-    filters.create(lambda _, __, m: SUB_REGEX.match(m.text.strip()) is not None),
+    F.text,
+    F.chat.type == "private",
+    lambda message: SUB_REGEX.match(message.text.strip()) is not None,
     group=1
 )
 async def github_sub_link_handler(message: Message):
@@ -109,7 +109,6 @@ async def github_sub_link_handler(message: Message):
     match = SUB_REGEX.match(text)
     owner, repo, sub_type, num = match.groups()
     
-    # GitHub unifies both Issues and PRs under the issues endpoint for metadata
     api_sub_type = "issues" if sub_type == "pull" else sub_type
     api_url = f"https://api.github.com/repos/{owner}/{repo}/{api_sub_type}/{num}"
     
@@ -122,7 +121,6 @@ async def github_sub_link_handler(message: Message):
         created_at = data.get("created_at", "")[:10]
         body = data.get("body") or ""
         
-        # Truncate body preview safely
         body_preview = body[:400] + "..." if len(body) > 400 else body
         
         emoji = "📋"
@@ -144,9 +142,9 @@ async def github_sub_link_handler(message: Message):
         await status_msg.edit_text(f"❌ *Failed to fetch thread:* {e}")
 
 @github_router.message(
-    filters.text & 
-    filters.private & 
-    filters.create(lambda _, __, m: GIST_REGEX.match(m.text.strip()) is not None),
+    F.text,
+    F.chat.type == "private",
+    lambda message: GIST_REGEX.match(message.text.strip()) is not None,
     group=1
 )
 async def github_gist_link_handler(message: Message, bot: Bot):
@@ -171,9 +169,7 @@ async def github_gist_link_handler(message: Message, bot: Bot):
         os.makedirs("cache", exist_ok=True)
         for filename, file_data in files.items():
             raw_url = file_data.get("raw_url")
-            file_size = file_data.get("size", 0)
             
-            # Write file locally and send
             temp_path = f"cache/{uuid.uuid4().hex[:6]}_{filename}"
             async with aiohttp.ClientSession() as session:
                 async with session.get(raw_url) as response:
@@ -181,7 +177,6 @@ async def github_gist_link_handler(message: Message, bot: Bot):
                         with open(temp_path, "wb") as f:
                             f.write(await response.read())
                             
-            # Native send
             await bot.send_document(
                 chat_id=user_id,
                 document=FSInputFile(temp_path),
@@ -238,7 +233,8 @@ async def github_user_handler(message: Message):
     status_msg = await message.reply("🔍 Fetching user repositories...")
     try:
         api_url = f"https://api.github.com/users/{username}/repos?sort=updated"
-        repos = await fetch_github_api(api_url)[:5]
+        repos = await fetch_github_api(api_url)
+        repos = repos[:5]
         
         if not repos:
             await status_msg.edit_text("ℹ️ No repositories found for this user.")
@@ -294,7 +290,6 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
     owner = meta["owner"]
     repo = meta["repo"]
     
-    # Common Back markup definition
     back_gh_markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Back to Repo Menu", callback_data=f"gh:{gh_id}:back")]
     ])
@@ -305,7 +300,6 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
         await callback_query.answer("Console closed.")
         
     elif action == "back":
-        doc_status = "✅" if is_document_mode(user_id) else "❌"
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Download (ZIP)", callback_data=f"gh:{gh_id}:zip")],
             [InlineKeyboardButton(text="🌿 Branches", callback_data=f"gh:{gh_id}:branches"), InlineKeyboardButton(text="📜 Commits", callback_data=f"gh:{gh_id}:commits")],
@@ -364,7 +358,8 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
         await callback_query.message.edit_text("🔍 Fetching commits...")
         try:
             api_url = f"https://api.github.com/repos/{owner}/{repo}/commits"
-            data = await fetch_github_api(api_url)[:5]
+            data = await fetch_github_api(api_url)
+            data = data[:5]
             
             commits_list = []
             for commit in data:
@@ -383,7 +378,6 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
     elif action == "readme":
         await callback_query.message.edit_text("🔍 Fetching README...")
         try:
-            # We request raw README content using specialized header
             headers = get_github_headers()
             headers["Accept"] = "application/vnd.github.v3.raw"
             api_url = f"https://api.github.com/repos/{owner}/{repo}/readme"
@@ -394,7 +388,6 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
                         raise RuntimeError(f"Failed to fetch raw README: {response.status}")
                     readme_text = await response.text()
             
-            # Safe boundary check: if README exceeds 3,500 characters, upload as a .txt file
             if len(readme_text) > 3500:
                 os.makedirs("cache", exist_ok=True)
                 temp_readme_path = f"cache/{gh_id}_README.txt"
@@ -420,7 +413,6 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
         await callback_query.answer()
 
     elif action == "zip":
-        # Dynamic async queue download job
         await callback_query.message.edit_text("⏳ Download request enqueued in Job Queue...")
         
         async def queued_zip_job():
@@ -430,7 +422,6 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             zip_api_url = f"https://api.github.com/repos/{owner}/{repo}/zipball"
             
             try:
-                # Direct chunked file stream from GitHub to save RAM
                 async with aiohttp.ClientSession() as session:
                     async with session.get(zip_api_url, headers=get_github_headers()) as response:
                         if response.status != 200:
@@ -440,11 +431,9 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
                             
                 await callback_query.message.edit_text("📤 Uploading repository ZIP package...")
                 
-                # Handover to Toyota sequential splitting uploader (Capped at 48MB parts!)
-                from main import app, premium_app
+                from main import app
                 await process_split_and_upload(
-                    bot_client=app,
-                    premium_client=premium_app,
+                    bot=app,
                     chat_id=callback_query.message.chat.id,
                     file_path=temp_zip_path,
                     action='d',

@@ -27,12 +27,17 @@ def is_social_media_link(url: str) -> bool:
     social_domains = ["youtube.com", "youtu.be", "instagram.com", "tiktok.com", "twitter.com", "x.com"]
     return any(domain in url_lower for domain in social_domains)
 
+def register_downloader_handlers(app: Client):
+    # Dynamic import to prevent loops
+    pass
+
 # =========================================================================
-# Group 1: Link Downloader Handler (Only triggers if the text is a link)
+# Group 1 Handlers: Link Downloader (Mutual-exclusive filters in aiogram v3)
 # =========================================================================
 @downloader_router.message(
     F.text,
-    F.create(lambda _, __, m: is_link(m.text.strip().split("|")[0].strip())),
+    F.chat.type == "private",
+    lambda message: is_link(message.text.strip().split("|")[0].strip()),
     group=1
 )
 async def text_link_handler(message: Message):
@@ -152,9 +157,7 @@ async def text_link_handler(message: Message):
 
         await queue.add_task(user_id, status_msg, direct_upload_job)
 
-# =========================================================================
-# Callback Query Handler for download selections
-# =========================================================================
+# Callback Query Handler
 @downloader_router.callback_query(F.data.startswith("dl:"))
 async def dl_callback_handler(callback_query: CallbackQuery, bot: Bot):
     data = callback_query.data
@@ -177,6 +180,14 @@ async def dl_callback_handler(callback_query: CallbackQuery, bot: Bot):
     cache_data = DOWNLOAD_CACHE.get(cache_id)
     if not cache_data:
         await callback_query.answer("⚠️ Session expired or not found.", show_alert=True)
+        return
+        
+    target_list = cache_data["videos"] if action == 'v' else cache_data["audios"]
+    target_fmt = next((f for f in target_list if f["format_id"] == format_id), None)
+    
+    if target_fmt and target_fmt["bytes"] > (50 * 1024 * 1024):
+        # Enforce Bale's strict 50MB upload limits for format selections
+        await callback_query.answer("❌ This format exceeds Bale's 50MB upload limits. Please select another quality.", show_alert=True)
         return
         
     await callback_query.message.edit_text(text="⏳ Request enqueued in Active Job Queue...")
