@@ -19,18 +19,18 @@ balebot/
 ├── ttcookies.txt          # TikTok cookies
 ├── xcookies.txt           # X/Twitter cookies
 ├── cookies.txt            # Fallback global cookies
-├── main.py                # [ADDED] Asynchronous bootloader with Bale tapi API redirect
+├── main.py                # [UPDATED] Bootloader with integrated Security middleware and routing
 └── utils/
     ├── __init__.py
-    ├── gate.py            # [ADDED] Whitelist & Settings database handlers
+    ├── gate.py            # Whitelist & Settings database handlers
     ├── downloader.py      # yt-dlp with 48MB chunk splitter
     ├── id_validator.py    # Handles digit checks and Telegram ID boundary verification
     ├── uploader.py        # 48MB sequential split uploader
-    ├── shared.py          # [ADDED] Globally shared queue and database cache registries
-    └── logger.py          # [ADDED] Standalone logging handler (Piping root logs to Bale)
+    ├── shared.py          # Globally shared queue and database cache registries
+    └── logger.py          # Standalone logging handler (Piping root logs to Bale)
 └── modules/
     ├── __init__.py
-    ├── admin.py           # Admin Callback Console (Whitelist, Blacklist bans, Settings)
+    ├── admin.py           # [ADDED] Secure Admin Console (aiogram v3 middleware and router)
     ├── github.py          # GitHub API cloner & repository browser
     ├── translate.py       # Google Translate engine (/tr command)
     ├── youtube.py         # YouTube download, search, & transcripts
@@ -39,5 +39,6 @@ balebot/
 
 ## 🛠 Progress Log
 - [x] **Phase 1: Project Setup & Environment Configurations**
-- [x] **Phase 2: Core Bootloader & API Redirects** (aiogram v3 api redirect bootloader implemented in `main.py` and log thread structured in `utils/logger.py`)
-- [ ] **Phase 3: Bale Bot Admin Console & Input Validator**
+- [x] **Phase 2: Core Bootloader & API Redirects**
+- [x] **Phase 3: Bale Bot Admin Console & Input Validator** (aiogram v3 security middleware, console router, and state validations written in `modules/admin.py` and updated in `main.py` [1.1.2])
+- [ ] **Phase 4: Google Translate & GitHub Assistant Modules**

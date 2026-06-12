@@ -2,11 +2,14 @@
 import os
 import time
 import asyncio
+import shutil
 import logging
+import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.client.session.aiohttp import AiohttpSession
 import config
+from utils.shared import queue, DOWNLOAD_CACHE, LAST_UPDATE_TIME
 
 # =========================================================================
 # Application Global Shared Instances
@@ -30,13 +33,14 @@ def setup_system_logger():
             from utils.logger import BaleChannelHandler
             root_logger = logging.getLogger()
             
-            # Lower root logger threshold so INFO logs are processed
+            # Explicitly lower root logger's filtering threshold so INFO logs are not discarded
             root_logger.setLevel(logging.INFO)
             
+            # Format logs briefly, our custom handler will add emojis, timestamps, and module tags
             formatter = logging.Formatter('%(message)s')
             handler = BaleChannelHandler(config.BALE_TOKEN, config.LOG_CHANNEL_ID)
             handler.setFormatter(formatter)
-            handler.setLevel(logging.INFO)
+            handler.setLevel(logging.INFO)  # Capture standard INFO, WARNING, and ERROR logs
             
             root_logger.addHandler(handler)
             print("[Logger] Standalone Bale Logging Service linked to Root Logger.")
@@ -46,6 +50,31 @@ def setup_system_logger():
 async def log_event(text: str):
     """Log an event locally. The standalone root logger handles automatic Bale routing."""
     logging.info(text)
+
+async def progress_bar_handler(current, total, message, status_title: str):
+    """Draws a visual progress bar and updates text every 5 seconds to avoid rate limiting."""
+    now = time.time()
+    msg_id = message.message_id
+    if msg_id in LAST_UPDATE_TIME and now - LAST_UPDATE_TIME[msg_id] < 5:
+        return
+    LAST_UPDATE_TIME[msg_id] = now
+    
+    percentage = (current * 100 / total) if total > 0 else 0
+    filled = int(percentage // 10)
+    bar_str = "■" * filled + "□" * (10 - filled)
+    
+    current_mb = round(current / (1024 * 1024), 1)
+    total_mb = round(total / (1024 * 1024), 1)
+    
+    text = (
+        f"⏳ *{status_title}*\n"
+        f"`[{bar_str}]` {percentage:.1f}%\n"
+        f"📦 `{current_mb} MB / {total_mb} MB`"
+    )
+    try:
+        await message.edit_text(text)
+    except Exception:
+        pass
 
 def initialize_cookie_jars():
     """Initializes empty cookie files with the Netscape header to prevent warnings."""
@@ -71,6 +100,29 @@ def initialize_cookie_jars():
             except Exception as e:
                 print(f"[Cookies] Warning: Could not initialize cookie jar {file_path}: {e}")
 
+async def auto_clean_cache_directory():
+    """Periodically sweeps the cache directory every hour to purge orphaned files older than 2 hours."""
+    while True:
+        print("[Cleaner] Running periodic cache sweep...")
+        cache_dir = "cache"
+        if os.path.exists(cache_dir):
+            now = time.time()
+            threshold = now - 7200  # 2 hours = 7200 seconds
+            try:
+                for entry in os.scandir(cache_dir):
+                    mtime = entry.stat().st_mtime
+                    if mtime < threshold:
+                        if entry.is_dir():
+                            shutil.rmtree(entry.path)
+                            print(f"[Cleaner] Purged orphaned directory: {entry.path}")
+                        else:
+                            os.remove(entry.path)
+                            print(f"[Cleaner] Purged orphaned file: {entry.path}")
+            except Exception as e:
+                print(f"[Cleaner] Exception occurred during cache sweep: {e}")
+                
+        await asyncio.sleep(3600)  # Wait 1 hour
+
 # =========================================================================
 # Event Loop Bootstrap & Startup Configuration
 # =========================================================================
@@ -84,25 +136,33 @@ async def main_engine():
     # 2. Initialize and format cookie files
     initialize_cookie_jars()
     
-    # 3. Import and register modular handler systems (We will define these next)
-    # from modules.admin import register_admin_handlers
+    # 3. Import, register, and bind modular routing and security middlewares
+    from modules.admin import admin_router, SecurityGateMiddleware
+    # from modules.downloader_handler import downloader_router
     # ...
+    
+    # Register our customized security middleware on both messages and callback query streams
+    dp.message.middleware(SecurityGateMiddleware())
+    dp.callback_query.middleware(SecurityGateMiddleware())
+    
+    # Include admin and setting routers
+    dp.include_router(admin_router)
     
     print("Bale Bot Online and Listening.")
     
     from utils.updater import auto_update_ytdlp
-    from main import auto_clean_cache_directory # Placeholder: we'll define auto_clean or import it
     
     # Run standard long polling and background tasks concurrently
-    # Note: No FastAPI or port exposures are needed!
     await asyncio.gather(
         dp.start_polling(bot),
-        auto_update_ytdlp()
+        auto_update_ytdlp(),
+        auto_clean_cache_directory()
     )
 
 if __name__ == "__main__":
     import sys
     try:
-        asyncio.run(main_engine())
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main_engine())
     except KeyboardInterrupt:
         print("Stopping bot gracefully...")
