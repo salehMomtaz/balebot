@@ -17,7 +17,7 @@ from aiogram.types import (
 import config
 from utils.gate import is_authorized
 from utils.shared import queue, DOWNLOAD_CACHE
-from utils.uploader_handler import process_split_and_upload
+from utils.uploader import process_split_and_upload
 
 # Initialize the modular GitHub router
 github_router = Router()
