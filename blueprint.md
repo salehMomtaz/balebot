@@ -19,7 +19,7 @@ balebot/
 ├── ttcookies.txt          # TikTok cookies
 ├── xcookies.txt           # X/Twitter cookies
 ├── cookies.txt            # Fallback global cookies
-├── main.py                # [UPDATED] Bootloader registering translation and admin routers
+├── main.py                # [UPDATED] Bootloader registering github, translate, and admin routers
 └── utils/
     ├── __init__.py
     ├── gate.py            # Whitelist & Settings database handlers
@@ -31,8 +31,8 @@ balebot/
 └── modules/
     ├── __init__.py
     ├── admin.py           # Secure Admin Console (aiogram v3 middleware and router)
-    ├── github.py          # GitHub API cloner & repository browser
-    ├── translate.py       # [ADDED] Direct async Google Translate engine (/tr command)
+    ├── github.py          # [ADDED] Direct async GitHub cloner, branches, commits, & release explorer
+    ├── translate.py       # Direct async Google Translate engine (/tr command)
     ├── youtube.py         # YouTube download, search, & transcripts
     └── direct_dl.py       # Direct URL downloader & webpage text extractor
 ```
@@ -42,4 +42,5 @@ balebot/
 - [x] **Phase 2: Core Bootloader & API Redirects**
 - [x] **Phase 3: Bale Bot Admin Console & Input Validator**
 - [x] **Phase 4: Google Translate Module** (Direct async translation engine written in `modules/translate.py` and registered in `main.py` [1.1.2])
-- [ ] **Phase 5: GitHub Assistant Module (Repository cloner and browser)**
+- [x] **Phase 5: GitHub Assistant Module** (Direct async repository cloner, zip installer, commits, and branch explorer written in `modules/github.py` and registered in `main.py` [1.1.2])
+- [ ] **Phase 6: YouTube Assistant Module (Transcripts, video/audio formats, search)**
