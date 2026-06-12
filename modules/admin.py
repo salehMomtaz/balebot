@@ -7,7 +7,9 @@ from aiogram.types import (
     Message, 
     InlineKeyboardMarkup, 
     InlineKeyboardButton,
-    TelegramObject
+    TelegramObject,
+    ForceReply,
+    FSInputFile
 )
 import config
 from utils.gate import (
@@ -56,7 +58,6 @@ class SecurityGateMiddleware(BaseMiddleware):
     authorized users, and automatically blacklists intruders.
     """
     async def __call__(self, handler, event: TelegramObject, data: dict):
-        # We dynamically import log_event to prevent circular dependencies
         from main import log_event
         
         user_id = event.from_user.id if event.from_user else None
@@ -88,13 +89,8 @@ async def purge_active_prompt(user_id: int, bot: Bot):
 # =========================================================================
 # 1. State Machine Handler (Processes text inputs ONLY if user is in an active state)
 # =========================================================================
-@admin_router.message(
-        F.text, 
-        filters.private, 
-        lambda message: message.from_user.id in USER_STATES
-    )
-async def admin_state_message_handler(client: Client, message: Message):
-    # Import log_event dynamically inside scope to prevent circular imports
+@admin_router.message(F.text, F.chat.type == "private", lambda message: message.from_user.id in USER_STATES)
+async def admin_state_message_handler(message: Message, bot: Bot):
     from main import log_event
 
     user_id = message.from_user.id
@@ -105,7 +101,7 @@ async def admin_state_message_handler(client: Client, message: Message):
     if input_text.lower() in ["/start", "🛠 console", "hey", "console", "hi!"]:
         USER_STATES.pop(user_id, None)
         await purge_active_prompt(user_id, bot)
-        return  # Bypasses and continues processing downstream
+        return  # Bypasses and continues processing downstream to main handler
         
     prompt_id = ACTIVE_PROMPTS.pop(user_id, None)
 
@@ -213,10 +209,15 @@ async def admin_state_message_handler(client: Client, message: Message):
 # =========================================================================
 # 2. Standard Private Text Router (Handles /start and console text triggers)
 # =========================================================================
-@admin_router.message(F.text, filters.private)
-async def admin_start_text_handler(client: Client, message: Message):
+@admin_router.message(F.text, F.chat.type == "private")
+async def admin_start_text_handler(message: Message):
     text = message.text.strip()
     user_id = message.from_user.id
+        
+    from modules.downloader_handler import is_link
+    if is_link(text):
+        # Pass link down to downloader_handler
+        raise ContinuePropagation()
         
     if user_id == config.SYSTEM_CREATOR_ID:
         doc_status = "✅" if is_document_mode(user_id) else "❌"
@@ -375,7 +376,7 @@ async def admin_callback_handler(callback_query: CallbackQuery, bot: Bot):
             reply_markup=keyboard
         )
         await callback_query.answer()
-        
+            
     elif data.startswith("admin_cookie_select:"):
         cookie_key = data.split(":")[1]
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -388,14 +389,13 @@ async def admin_callback_handler(callback_query: CallbackQuery, bot: Bot):
             reply_markup=keyboard
         )
         await callback_query.answer()
-        
+            
     elif data.startswith("admin_cookie_action:"):
         _, cookie_key, action = data.split(":")
         file_path = COOKIE_MAP.get(cookie_key)
         
         if action == "download":
             if os.path.exists(file_path):
-                # Using standard open / input file since aiogram doesn't use Pyrogram file routing
                 from aiogram.types import FSInputFile
                 await bot.send_document(
                     chat_id=user_id,
