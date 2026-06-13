@@ -135,7 +135,8 @@ async def main_engine():
     initialize_cookie_jars()
     
     # 3. Import and register modular routing and security middlewares
-    from modules.admin.router import admin_router, SecurityGateMiddleware
+    from modules.admin.router import admin_router
+    from modules.admin.middleware import SecurityGateMiddleware
     from modules.user.router import user_router
     from modules.translate.router import translate_router
     from modules.github.router import github_router
