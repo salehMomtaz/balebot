@@ -1,29 +1,33 @@
-# modules/github.py
+# modules/github/router.py
 import os
 import re
 import uuid
 import glob
+import shutil
 import asyncio
+import urllib.parse
 from datetime import datetime, timedelta
 import aiohttp
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
-from aiogram.types import (
-    Message, 
-    InlineKeyboardMarkup, 
-    InlineKeyboardButton, 
-    CallbackQuery,
-    FSInputFile
-)
+from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 import config
 from utils.gate import is_authorized
-from utils.shared import queue, DOWNLOAD_CACHE
-from utils.uploader import process_split_and_upload
+from utils.shared import queue
+from operators.uploader import process_split_and_upload, upload_file_direct_to_bale
+from modules.github.api import fetch_github_api, get_github_headers
+from modules.github.keyboards import (
+    get_repo_menu_keyboard, 
+    get_back_keyboard,
+    get_branches_keyboard,
+    get_releases_keyboard,
+    get_files_explorer_keyboard
+)
 
-# Initialize the modular GitHub router
 github_router = Router()
 
-# In-memory dictionary to protect callback_data from exceeding 64 bytes
+# Stateful Session Cache mapping short IDs to real parameters
+# Structure: { gh_id: { "owner": "...", "repo": "...", "path": "/", "page": 1, "items_list": [] } }
 GITHUB_CACHE = {}
 
 # Regex compilers for clean URL capture
@@ -31,30 +35,8 @@ REPO_REGEX = re.compile(r"https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/?$")
 SUB_REGEX = re.compile(r"https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(issues|pull|discussions)/(\d+)/?$")
 GIST_REGEX = re.compile(r"https?://gist\.github\.com/([^/]+)/([a-f0-9]+)/?$")
 
-def get_github_headers() -> dict:
-    """Generate headers with auth keys if present to elevate rate limits to 5,000/hr."""
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "balebot-github-assistant"
-    }
-    if config.GITHUB_TOKEN:
-        headers["Authorization"] = f"token {config.GITHUB_TOKEN}"
-    return headers
-
-async def fetch_github_api(url: str) -> dict:
-    """Helper to perform non-blocking async GET requests to GitHub API."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=get_github_headers(), timeout=15) as response:
-            if response.status == 403:
-                raise RuntimeError("GitHub API Rate limit exceeded. Please configure GITHUB_TOKEN.")
-            if response.status == 404:
-                raise FileNotFoundError("Specified GitHub resource not found.")
-            if response.status != 200:
-                raise RuntimeError(f"GitHub returned HTTP Error: {response.status}")
-            return await response.json()
-
 # =========================================================================
-# Group 1 Handlers: Link Interceptors (Pure aiogram v3 Syntax)
+# Link Interceptors (Pure aiogram v3 Syntax)
 # =========================================================================
 
 @github_router.message(
@@ -63,33 +45,30 @@ async def fetch_github_api(url: str) -> dict:
     lambda message: REPO_REGEX.match(message.text.strip().split("|")[0].strip()) is not None
 )
 async def github_repo_link_handler(message: Message):
-    """Intercepts standard repository links and presents the control panel."""
     user_id = message.from_user.id
     if not is_authorized(user_id):
         return
         
     text = message.text.strip().split("|")[0].strip()
     match = REPO_REGEX.match(text)
-    owner = match.group(1)
-    repo = match.group(2)
+    owner, repo = match.groups()
     
     # Generate unique 8-character ID and save to cache
     gh_id = f"gh_{str(uuid.uuid4())[:8]}"
-    GITHUB_CACHE[gh_id] = {"owner": owner, "repo": repo}
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📥 Download (ZIP)", callback_data=f"gh:{gh_id}:zip")],
-        [InlineKeyboardButton(text="🌿 Branches", callback_data=f"gh:{gh_id}:branches"), InlineKeyboardButton(text="📜 Commits", callback_data=f"gh:{gh_id}:commits")],
-        [InlineKeyboardButton(text="📖 README", callback_data=f"gh:{gh_id}:readme"), InlineKeyboardButton(text="📊 Info", callback_data=f"gh:{gh_id}:info")],
-        [InlineKeyboardButton(text="❌ Close Console", callback_data=f"gh:{gh_id}:close")]
-    ])
+    GITHUB_CACHE[gh_id] = {
+        "owner": owner, 
+        "repo": repo,
+        "path": "/",
+        "page": 1,
+        "items_list": []
+    }
     
     await message.reply(
         text=f"🐙 *GitHub Repository Browser*\n\n"
              f"📁 *Repository:* `{owner}/{repo}`\n"
              f"🔗 *URL:* https://github.com/{owner}/{repo}\n\n"
-             f"Select an administration action:",
-        reply_markup=keyboard
+             f"Select an action:",
+        reply_markup=get_repo_menu_keyboard(gh_id)
     )
 
 @github_router.message(
@@ -98,7 +77,6 @@ async def github_repo_link_handler(message: Message):
     lambda message: SUB_REGEX.match(message.text.strip()) is not None
 )
 async def github_sub_link_handler(message: Message):
-    """Intercepts issues, pull requests, and discussions links directly."""
     user_id = message.from_user.id
     if not is_authorized(user_id):
         return
@@ -120,13 +98,8 @@ async def github_sub_link_handler(message: Message):
         body = data.get("body") or ""
         
         body_preview = body[:400] + "..." if len(body) > 400 else body
+        emoji = "🔀" if sub_type == "pull" else ("💬" if sub_type == "discussions" else "📋")
         
-        emoji = "📋"
-        if sub_type == "pull":
-            emoji = "🔀"
-        elif sub_type == "discussions":
-            emoji = "💬"
-            
         await status_msg.edit_text(
             text=f"{emoji} *GitHub Thread: #{num}*\n\n"
                  f"🏷️ *Title:* `{title}`\n"
@@ -145,7 +118,6 @@ async def github_sub_link_handler(message: Message):
     lambda message: GIST_REGEX.match(message.text.strip()) is not None
 )
 async def github_gist_link_handler(message: Message, bot: Bot):
-    """Intercepts Gist links and delivers raw files directly."""
     user_id = message.from_user.id
     if not is_authorized(user_id):
         return
@@ -166,7 +138,6 @@ async def github_gist_link_handler(message: Message, bot: Bot):
         os.makedirs("cache", exist_ok=True)
         for filename, file_data in files.items():
             raw_url = file_data.get("raw_url")
-            
             temp_path = f"cache/{uuid.uuid4().hex[:6]}_{filename}"
             async with aiohttp.ClientSession() as session:
                 async with session.get(raw_url) as response:
@@ -174,40 +145,36 @@ async def github_gist_link_handler(message: Message, bot: Bot):
                         with open(temp_path, "wb") as f:
                             f.write(await response.read())
                             
-            await bot.send_document(
+            await upload_file_direct_to_bale(
+                method="sendDocument",
                 chat_id=user_id,
-                document=FSInputFile(temp_path),
+                file_path=temp_path,
                 caption=f"📁 *Gist File:* `{filename}`"
             )
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-                
         await status_msg.delete()
     except Exception as e:
         await status_msg.edit_text(f"❌ *Failed to fetch Gist:* {e}")
 
 # =========================================================================
-# Group 1 Handlers: Search and Trend Commands
+# Commands Implementation (Search and Trend)
 # =========================================================================
 
 @github_router.message(Command("search"))
 async def github_search_handler(message: Message):
-    """Allows searching repositories based on stars."""
     query = message.text[7:].strip()
     if not query:
-        await message.reply("⚠️ *Usage:* `/search <query>` (e.g. `/search django`)")
+        await message.reply("⚠️ *Usage:* `/search <query>`")
         return
-        
     status_msg = await message.reply("🔍 Searching GitHub...")
     try:
         api_url = f"https://api.github.com/search/repositories?q={urllib.parse.quote(query)}&sort=stars&order=desc"
         data = await fetch_github_api(api_url)
         items = data.get("items", [])[:5]
-        
         if not items:
-            await status_msg.edit_text("ℹ️ No repositories found matching your query.")
+            await status_msg.edit_text("ℹ️ No repositories found matching query.")
             return
-            
         results = []
         for idx, item in enumerate(items, 1):
             results.append(
@@ -221,22 +188,18 @@ async def github_search_handler(message: Message):
 
 @github_router.message(Command("user"))
 async def github_user_handler(message: Message):
-    """Lists the last 5 updated repositories of a user."""
     username = message.text[5:].strip()
     if not username:
-        await message.reply("⚠️ *Usage:* `/user <username>` (e.g. `/user torvalds`)")
+        await message.reply("⚠️ *Usage:* `/user <username>`")
         return
-        
     status_msg = await message.reply("🔍 Fetching user repositories...")
     try:
         api_url = f"https://api.github.com/users/{username}/repos?sort=updated"
         repos = await fetch_github_api(api_url)
         repos = repos[:5]
-        
         if not repos:
             await status_msg.edit_text("ℹ️ No repositories found for this user.")
             return
-            
         results = []
         for idx, repo in enumerate(repos, 1):
             results.append(
@@ -250,14 +213,12 @@ async def github_user_handler(message: Message):
 
 @github_router.message(Command("trend"))
 async def github_trend_handler(message: Message):
-    """Calculates weekly trends by searching repos created in the last 7 days sorted by stars."""
     status_msg = await message.reply("🔍 Fetching weekly trending repositories...")
     try:
         since_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
         api_url = f"https://api.github.com/search/repositories?q=created:>{since_date}&sort=stars&order=desc"
         data = await fetch_github_api(api_url)
         items = data.get("items", [])[:5]
-        
         results = []
         for idx, item in enumerate(items, 1):
             results.append(
@@ -270,26 +231,26 @@ async def github_trend_handler(message: Message):
         await status_msg.edit_text(f"❌ *Failed to fetch trends:* {e}")
 
 # =========================================================================
-# Group 2 Callback Dispatcher: Handles Inline Button Operations
+# Callback Query Dispatcher (Stateful Navigational Operations)
 # =========================================================================
 
 @github_router.callback_query(F.data.startswith("gh:"))
 async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
     data = callback_query.data
-    _, gh_id, action = data.split(":")
+    parts = data.split(":")
+    
+    gh_id = parts[1]
+    action = parts[2]
     user_id = callback_query.from_user.id
     
     meta = GITHUB_CACHE.get(gh_id)
     if not meta:
-        await callback_query.answer("⚠️ Session expired. Please send the link again.", show_alert=True)
+        await callback_query.answer("⚠️ Session expired. Please resend your repository link.", show_alert=True)
         return
         
     owner = meta["owner"]
     repo = meta["repo"]
-    
-    back_gh_markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Back to Repo Menu", callback_data=f"gh:{gh_id}:back")]
-    ])
+    back_gh_markup = get_back_keyboard(gh_id)
 
     if action == "close":
         GITHUB_CACHE.pop(gh_id, None)
@@ -297,18 +258,12 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
         await callback_query.answer("Console closed.")
         
     elif action == "back":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📥 Download (ZIP)", callback_data=f"gh:{gh_id}:zip")],
-            [InlineKeyboardButton(text="🌿 Branches", callback_data=f"gh:{gh_id}:branches"), InlineKeyboardButton(text="📜 Commits", callback_data=f"gh:{gh_id}:commits")],
-            [InlineKeyboardButton(text="📖 README", callback_data=f"gh:{gh_id}:readme"), InlineKeyboardButton(text="📊 Info", callback_data=f"gh:{gh_id}:info")],
-            [InlineKeyboardButton(text="❌ Close Console", callback_data=f"gh:{gh_id}:close")]
-        ])
         await callback_query.message.edit_text(
             text=f"🐙 *GitHub Repository Browser*\n\n"
                  f"📁 *Repository:* `{owner}/{repo}`\n"
                  f"🔗 *URL:* https://github.com/{owner}/{repo}\n\n"
-                 f"Select an administration action:",
-            reply_markup=keyboard
+                 f"Select an action:",
+            reply_markup=get_repo_menu_keyboard(gh_id)
         )
         await callback_query.answer()
 
@@ -344,11 +299,54 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
         try:
             api_url = f"https://api.github.com/repos/{owner}/{repo}/branches"
             data = await fetch_github_api(api_url)
-            branches_list = [f"• `{branch['name']}`" for branch in data]
-            text = f"🌿 *Branches inside: {owner}/{repo}*\n\n" + "\n".join(branches_list)
-            await callback_query.message.edit_text(text, reply_markup=back_gh_markup)
+            await callback_query.message.edit_text(
+                text=f"🌿 *Branches inside: {owner}/{repo}*\nSelect a branch to download its ZIP package:",
+                reply_markup=get_branches_keyboard(gh_id, data)
+            )
         except Exception as e:
             await callback_query.message.edit_text(f"❌ *Failed to fetch branches:* {e}", reply_markup=back_gh_markup)
+        await callback_query.answer()
+
+    elif action.startswith("branch_select"):
+        branch_name = parts[3]
+        await callback_query.message.edit_text("⏳ Request enqueued in Job Queue...")
+        
+        async def queued_branch_zip_job():
+            await callback_query.message.edit_text(f"⚡ Starting ZIP stream download for branch `{branch_name}`...")
+            os.makedirs("cache", exist_ok=True)
+            temp_zip_path = f"cache/{gh_id}_{repo}_{branch_name}.zip"
+            zip_api_url = f"https://api.github.com/repos/{owner}/{repo}/zipball/{branch_name}"
+            
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(zip_api_url, headers=get_github_headers()) as response:
+                        if response.status != 200:
+                            raise RuntimeError(f"GitHub returned HTTP Error: {response.status}")
+                        with open(temp_zip_path, "wb") as f:
+                            f.write(await response.read())
+                            
+                await callback_query.message.edit_text("📤 Uploading repository ZIP package...")
+                
+                from main import bot as main_bot
+                await process_split_and_upload(
+                    bot=main_bot,
+                    chat_id=callback_query.message.chat.id,
+                    file_path=temp_zip_path,
+                    action='d',
+                    title=f"{repo}_{branch_name}.zip",
+                    uploader="GitHub",
+                    duration=0,
+                    thumb_path=None,
+                    progress_msg=callback_query.message
+                )
+                from main import log_event
+                await log_event(f"📦 **GitHub Cloner:** ZIP package of `{owner}/{repo}` (branch `{branch_name}`) uploaded.")
+            except Exception as e:
+                await callback_query.message.edit_text(f"❌ *GitHub Branch ZIP Cloner failed:* {e}", reply_markup=back_gh_markup)
+                from main import log_event
+                await log_event(f"❌ **GitHub Cloner Error:** Failed to clone branch `{branch_name}`. Details: `{str(e)}`")
+
+        await queue.add_task(user_id, callback_query.message, queued_branch_zip_job)
         await callback_query.answer()
 
     elif action == "commits":
@@ -391,15 +389,15 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
                 with open(temp_readme_path, "w", encoding="utf-8") as f:
                     f.write(readme_text)
                     
-                await bot.send_document(
+                await upload_file_direct_to_bale(
+                    method="sendDocument",
                     chat_id=user_id,
-                    document=FSInputFile(temp_readme_path),
+                    file_path=temp_readme_path,
                     caption=f"📖 *README File:* `{owner}/{repo}`"
                 )
                 if os.path.exists(temp_readme_path):
                     os.remove(temp_readme_path)
-                    
-                await callback_query.message.edit_text("📥 README was too long for text limit and has been delivered as a file attachment.", reply_markup=back_gh_markup)
+                await callback_query.message.edit_text("📥 README was too long for text limit and has been delivered as file.", reply_markup=back_gh_markup)
             else:
                 await callback_query.message.edit_text(
                     text=f"📖 *README: {owner}/{repo}*\n\n```\n{readme_text}\n```",
@@ -409,45 +407,142 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             await callback_query.message.edit_text(f"❌ *Failed to fetch README:* {e}", reply_markup=back_gh_markup)
         await callback_query.answer()
 
-    elif action == "zip":
-        await callback_query.message.edit_text("⏳ Download request enqueued in Job Queue...")
-        
-        async def queued_zip_job():
-            await callback_query.message.edit_text("⚡ Starting ZIP stream download from GitHub...")
-            os.makedirs("cache", exist_ok=True)
-            temp_zip_path = f"cache/{gh_id}_{repo}.zip"
-            zip_api_url = f"https://api.github.com/repos/{owner}/{repo}/zipball"
+    # =========================================================================
+    # File Explorer Stateful Handlers
+    # =========================================================================
+    elif action == "files":
+        await callback_query.message.edit_text("🔍 Loading directory contents...")
+        try:
+            # Set up starting path boundaries
+            meta["path"] = "/"
+            meta["page"] = 1
             
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(zip_api_url, headers=get_github_headers()) as response:
-                        if response.status != 200:
-                            raise RuntimeError(f"GitHub returned HTTP Error: {response.status}")
-                        with open(temp_zip_path, "wb") as f:
-                            f.write(await response.read())
-                            
-                await callback_query.message.edit_text("📤 Uploading repository ZIP package...")
-                
-                from main import app
-                await process_split_and_upload(
-                    bot=app,
-                    chat_id=callback_query.message.chat.id,
-                    file_path=temp_zip_path,
-                    action='d',
-                    title=f"{repo}.zip",
-                    uploader="GitHub",
-                    duration=0,
-                    thumb_path=None,
-                    progress_msg=callback_query.message
-                )
-                
-                GITHUB_CACHE.pop(gh_id, None)
-                from main import log_event
-                await log_event(f"📦 **GitHub Cloner:** ZIP package of `{owner}/{repo}` successfully uploaded.")
-                
-            except Exception as e:
-                await callback_query.message.edit_text(f"❌ *GitHub ZIP Cloner failed:* {e}", reply_markup=back_gh_markup)
-                from main import log_event
-                await log_event(f"❌ **GitHub Cloner Error:** Failed to clone `{owner}/{repo}`. Details: `{str(e)}`")
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/contents"
+            data = await fetch_github_api(api_url)
+            meta["items_list"] = data  # Cache the items list in RAM
+            
+            keyboard = get_files_explorer_keyboard(gh_id, data, "/", 1)
+            await callback_query.message.edit_text(
+                text=f"📁 *Repository File Explorer*\n\n"
+                     f"📦 *Repository:* `{owner}/{repo}`\n"
+                     f"📂 *Active Path:* `/`\n"
+                     f"📄 Page `{1}` | Displaying `{len(data)}` items:",
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            await callback_query.message.edit_text(f"❌ *Failed to launch explorer:* {e}", reply_markup=back_gh_markup)
+        await callback_query.answer()
 
-        await queue.add_task(user_id, callback_query.message, queued_zip_job)
+    elif action.startswith("file_page"):
+        target_page = int(parts[3])
+        meta["page"] = target_page
+        
+        items = meta["items_list"]
+        path = meta["path"]
+        
+        keyboard = get_files_explorer_keyboard(gh_id, items, path, target_page)
+        await callback_query.message.edit_text(
+            text=f"📁 *Repository File Explorer*\n\n"
+                 f"📦 *Repository:* `{owner}/{repo}`\n"
+                 f"📂 *Active Path:* `{path}`\n"
+                 f"📄 Page `{target_page}` | Displaying `{len(items)}` items:",
+            reply_markup=keyboard
+        )
+        await callback_query.answer()
+
+    elif action == "file_up":
+        await callback_query.message.edit_text("🔍 Moving to parent directory...")
+        try:
+            current_path = meta["path"]
+            # Strip last directory node to get parent path (e.g. "/utils/gate" -> "/utils")
+            parent_path = "/" + "/".join([node for node in current_path.split("/") if node][:-1])
+            if parent_path == "":
+                parent_path = "/"
+                
+            meta["path"] = parent_path
+            meta["page"] = 1
+            
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/contents"
+            if parent_path != "/":
+                api_url += f"{parent_path}"
+                
+            data = await fetch_github_api(api_url)
+            meta["items_list"] = data
+            
+            keyboard = get_files_explorer_keyboard(gh_id, data, parent_path, 1)
+            await callback_query.message.edit_text(
+                text=f"📁 *Repository File Explorer*\n\n"
+                     f"📦 *Repository:* `{owner}/{repo}`\n"
+                     f"📂 *Active Path:* `{parent_path}`\n"
+                     f"📄 Page `{1}` | Displaying `{len(data)}` items:",
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            await callback_query.message.edit_text(f"❌ *Failed to navigate up:* {e}", reply_markup=back_gh_markup)
+        await callback_query.answer()
+
+    elif action.startswith("file_nav"):
+        item_idx = int(parts[3])
+        items = meta["items_list"]
+        selected_item = items[item_idx]
+        item_type = selected_item["type"]
+        item_name = selected_item["name"]
+        item_path = selected_item["path"]
+        
+        if item_type == "dir":
+            await callback_query.message.edit_text(f"🔍 Entering `{item_name}`...")
+            try:
+                meta["path"] = f"/{item_path}"
+                meta["page"] = 1
+                
+                api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{item_path}"
+                data = await fetch_github_api(api_url)
+                meta["items_list"] = data
+                
+                keyboard = get_files_explorer_keyboard(gh_id, data, f"/{item_path}", 1)
+                await callback_query.message.edit_text(
+                    text=f"📁 *Repository File Explorer*\n\n"
+                         f"📦 *Repository:* `{owner}/{repo}`\n"
+                         f"📂 *Active Path:* `/{item_path}`\n"
+                         f"📄 Page `{1}` | Displaying `{len(data)}` items:",
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                await callback_query.message.edit_text(f"❌ *Failed to enter directory:* {e}", reply_markup=back_gh_markup)
+            await callback_query.answer()
+            
+        elif item_type == "file":
+            # Direct file download and transfer!
+            await callback_query.answer(f"📥 Enqueueing download for {item_name}...", show_alert=True)
+            
+            async def queued_file_job():
+                os.makedirs("cache", exist_ok=True)
+                temp_file_path = f"cache/{gh_id}_{item_name}"
+                raw_download_url = selected_item["download_url"]
+                
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(raw_download_url) as response:
+                            if response.status != 200:
+                                raise RuntimeError(f"Failed to fetch raw file: {response.status}")
+                            with open(temp_file_path, "wb") as f:
+                                f.write(await response.read())
+                                
+                    # Send document directly
+                    await upload_file_direct_to_bale(
+                        method="sendDocument",
+                        chat_id=user_id,
+                        file_path=temp_file_path,
+                        caption=f"📄 *File delivered:* `{item_name}`"
+                    )
+                    
+                    from main import log_event
+                    await log_event(f"📄 **GitHub Explorer:** Successfully transferred file `{item_name}` for User `{user_id}`.")
+                except Exception as e:
+                    await callback_query.message.reply(text=f"❌ *Failed to download file {item_name}:* {e}")
+                finally:
+                    if os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
+            
+            # Enqueue file download
+            await queue.add_task(user_id, callback_query.message, queued_file_job)

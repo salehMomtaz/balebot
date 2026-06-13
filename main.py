@@ -4,6 +4,7 @@ import time
 import asyncio
 import shutil
 import logging
+import uvicorn
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -83,8 +84,8 @@ def initialize_cookie_jars():
         else:
             try:
                 with open(file_path, "r") as f:
-                    first_line = f.readline()
-                if not first_line.startswith("# Netscape"):
+                    header = f.read(15)  # Read first 15 bytes to strictly verify header syntax
+                if "# Netscape" not in header:
                     needs_init = True
             except Exception:
                 needs_init = True
@@ -134,11 +135,13 @@ async def main_engine():
     initialize_cookie_jars()
     
     # 3. Import and register modular routing and security middlewares
-    from modules.admin import admin_router, SecurityGateMiddleware
-    from modules.translate import translate_router
-    from modules.github import github_router
-    from modules.downloader_handler import downloader_router
-    from modules.direct_dl import direct_dl_router
+    from modules.admin.router import admin_router, SecurityGateMiddleware
+    from modules.user.router import user_router
+    from modules.translate.router import translate_router
+    from modules.github.router import github_router
+    from modules.youtube.router import youtube_router
+    from modules.downloader.router import downloader_router
+    from modules.direct_dl.router import direct_dl_router
     
     # Register our customized security middleware on both messages and callback query streams
     dp.message.middleware(SecurityGateMiddleware())
@@ -146,8 +149,10 @@ async def main_engine():
     
     # Include all modular routers
     dp.include_router(admin_router)
+    dp.include_router(user_router)
     dp.include_router(translate_router)
     dp.include_router(github_router)
+    dp.include_router(youtube_router)
     dp.include_router(downloader_router)
     dp.include_router(direct_dl_router)
     

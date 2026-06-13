@@ -1,4 +1,4 @@
-# modules/downloader_handler.py
+# modules/downloader/router.py
 import os
 import uuid
 import shutil
@@ -11,10 +11,9 @@ import config
 from utils.shared import queue, DOWNLOAD_CACHE
 from main import progress_bar_handler, log_event
 from utils.gate import is_authorized
-from utils.downloader import extract_formats, download_media
-from utils.uploader import process_split_and_upload
+from operators.downloader import extract_formats, download_media  # Path points cleanly to operators/
+from operators.uploader import process_split_and_upload           # Path points cleanly to operators/
 
-# Initialize the independent modular downloader router
 downloader_router = Router()
 
 def is_link(text: str) -> bool:
@@ -194,7 +193,7 @@ async def dl_callback_handler(callback_query: CallbackQuery, bot: Bot):
         await callback_query.message.edit_text(text="⚡️ Downloading file from server to VPS...")
         loop = asyncio.get_event_loop()
         try:
-            from utils.downloader import download_media
+            from operators.downloader import download_media  # Updated path to operators/
             
             async def download_progress(curr, tot):
                 await progress_bar_handler(curr, tot, callback_query.message, "Downloading from server to VPS...")
