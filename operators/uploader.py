@@ -1,48 +1,82 @@
-# utils/uploader.py
+# operators/uploader.py
 import os
 import asyncio
+import aiohttp
 from aiogram import Bot
-from aiogram.types import FSInputFile
 from utils.gate import is_document_mode
+import config
+
+async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, caption: str = "", extra_params: dict = None) -> dict:
+    """
+    Directly uploads a file to Bale's API using standard multipart/form-data POST.
+    Bypasses framework-specific serialization limitations completely to guarantee successful delivery.
+    """
+    url = f"https://tapi.bale.ai/bot{config.BALE_TOKEN}/{method}"
+    
+    # Map the multipart form field name to the target Bale API method
+    field_name = "document"
+    if method == "sendVideo":
+        field_name = "video"
+    elif method == "sendAudio":
+        field_name = "audio"
+        
+    async with aiohttp.ClientSession() as session:
+        with open(file_path, "rb") as f:
+            form = aiohttp.FormData()
+            form.add_field("chat_id", str(chat_id))
+            if caption:
+                form.add_field("caption", caption)
+                
+            if extra_params:
+                for k, v in extra_params.items():
+                    if v is not None:
+                        form.add_field(k, str(v))
+                        
+            form.add_field(field_name, f, filename=os.path.basename(file_path))
+            
+            async with session.post(url, data=form, timeout=1800) as response:
+                res_json = await response.json()
+                if not res_json.get("ok"):
+                    raise RuntimeError(f"Bale API Error: {res_json.get('description', 'Unknown')}")
+                return res_json
 
 async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str, title: str, uploader: str, duration: int, thumb_path: str, progress_fn, force_document=False):
-    """Sends a single media file to Bale using aiogram v3 FSInputFile, passing thumbs to document uploads too."""
-    from utils.downloader import probe_video_dimensions
-    
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"File not found: {file_path}")
-        
-    doc_file = FSInputFile(file_path)
-    thumb_file = FSInputFile(thumb_path) if (thumb_path and os.path.exists(thumb_path)) else None
-    
+    """Sends a single media file to Bale using direct standard multipart uploads."""
     if force_document:
-        return await bot.send_document(
+        return await upload_file_direct_to_bale(
+            method="sendDocument",
             chat_id=chat_id,
-            document=doc_file,
-            caption=f"📁 **Part:** `{os.path.basename(file_path)}`",
-            thumbnail=thumb_file,  # Bale supports document thumbnail previews!
+            file_path=file_path,
+            caption=f"📁 **Part:** `{os.path.basename(file_path)}`"
         )
         
     if action == 'a':
-        return await bot.send_audio(
+        return await upload_file_direct_to_bale(
+            method="sendAudio",
             chat_id=chat_id,
-            audio=doc_file,
-            title=title,
-            performer=uploader,
-            duration=int(duration),
-            thumbnail=thumb_file
+            file_path=file_path,
+            caption=f"🎵 **{title}**\nUploaded via Downloader Bot",
+            extra_params={
+                "title": title,
+                "performer": uploader,
+                "duration": int(duration)
+            }
         )
     else:  # action == 'v'
+        from utils.downloader import probe_video_dimensions
         width, height, parsed_duration = probe_video_dimensions(file_path)
         final_duration = parsed_duration if parsed_duration > 0 else int(duration)
-        return await bot.send_video(
+        return await upload_file_direct_to_bale(
+            method="sendVideo",
             chat_id=chat_id,
-            video=doc_file,
-            width=width,
-            height=height,
-            duration=final_duration,
-            thumbnail=thumb_file,
-            supports_streaming=True
+            file_path=file_path,
+            caption=f"🎥 **{title}**\nUploaded via Downloader Bot",
+            extra_params={
+                "width": width,
+                "height": height,
+                "duration": final_duration,
+                "supports_streaming": "true"
+            }
         )
 
 async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, action: str, title: str, uploader: str, duration: int, thumb_path: str, progress_msg):
