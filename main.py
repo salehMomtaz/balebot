@@ -169,6 +169,14 @@ async def main_engine():
             
     from utils.updater import auto_update_ytdlp
     
+    # CRITICAL RELIABILITY FIX: Clear webhook and drop any backlog updates sent when the bot was down!
+    try:
+        print("[Polling] Removing webhook and dropping pending backlog...")
+        await bot.delete_webhook(drop_pending_updates=True)
+        print("[Polling] Backlog successfully dropped.")
+    except Exception as e:
+        print(f"[Polling] Warning: Failed to drop pending updates: {e}")
+
     # Run standard long polling and background tasks concurrently (No ports opened!)
     await asyncio.gather(
         dp.start_polling(bot),

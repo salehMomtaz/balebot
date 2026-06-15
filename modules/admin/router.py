@@ -31,7 +31,26 @@ async def purge_active_prompt(user_id: int, bot: Bot):
             pass
 
 # =========================================================================
-# 1. State Machine Handler (Processes text inputs ONLY if user is in an active state)
+# 1. Admin Command Handler (Allows Creator to Open the Console Menu)
+# =========================================================================
+@admin_router.message(
+    F.text,
+    F.chat.type == "private",
+    lambda message: message.from_user.id == config.SYSTEM_CREATOR_ID,
+    lambda message: message.text.strip().lower() in ["/start", "/admin", "🛠 console", "console"]
+)
+async def admin_console_cmd_handler(message: Message):
+    user_id = message.from_user.id
+    USER_STATES.pop(user_id, None)
+    await purge_active_prompt(user_id, message.bot)
+    
+    await message.reply(
+        text="🛠 *Admin Console*\nSelect an action below to manage authorized users, blacklist logs, cookie jars, or system settings:",
+        reply_markup=get_admin_console_keyboard(user_id)
+    )
+
+# =========================================================================
+# 2. State Machine Handler (Processes text inputs ONLY if user is in an active state)
 # =========================================================================
 @admin_router.message(F.text, F.chat.type == "private", lambda message: message.from_user.id in USER_STATES)
 async def admin_state_message_handler(message: Message, bot: Bot):
@@ -123,3 +142,151 @@ async def admin_state_message_handler(message: Message, bot: Bot):
         if unblacklist_user(target_id):
             await message.reply(text=f"✅ User `{target_id}` has been unbanned.", reply_markup=back_markup)
             await log_event(f"🔓 *User Unbanned:* Creator unbanned User ID `{target_id}`.")
+
+# =========================================================================
+# 3. Callback Query Handlers (Processes Main Console Menu Buttons)
+# =========================================================================
+
+@admin_router.callback_query(F.data == "admin_main")
+async def callback_admin_main(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    USER_STATES.pop(user_id, None)
+    await callback_query.message.edit_text(
+        text="🛠 *Admin Console*\nSelect an action below to manage authorized users, blacklist logs, cookie jars, or system settings:",
+        reply_markup=get_admin_console_keyboard(user_id)
+    )
+    await callback_query.answer()
+
+@admin_router.callback_query(F.data == "admin_list")
+async def callback_admin_list(callback_query: CallbackQuery):
+    db = load_database()
+    auth_list = db.get("authorized", [])
+    if not auth_list:
+        text = "👥 *Authorized Users*\n\nNo users are currently authorized."
+    else:
+        lines = [f"• `{uid}`" for uid in auth_list]
+        text = "👥 *Authorized Users List*\n\n" + "\n".join(lines)
+    await callback_query.message.edit_text(text=text, reply_markup=back_markup)
+    await callback_query.answer()
+
+@admin_router.callback_query(F.data == "admin_add")
+async def callback_admin_add(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    USER_STATES[user_id] = "waiting_for_add_user"
+    
+    prompt_msg = await callback_query.message.reply(
+        text="➕ *Add User*\nPlease enter the numeric User ID to authorize (or send /start to cancel):",
+        reply_markup=ForceReply(selective=True)
+    )
+    ACTIVE_PROMPTS[user_id] = prompt_msg.message_id
+    await callback_query.answer()
+
+@admin_router.callback_query(F.data == "admin_remove")
+async def callback_admin_remove(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    USER_STATES[user_id] = "waiting_for_remove_user"
+    
+    prompt_msg = await callback_query.message.reply(
+        text="➖ *Remove User*\nPlease enter the numeric User ID to revoke (or send /start to cancel):",
+        reply_markup=ForceReply(selective=True)
+    )
+    ACTIVE_PROMPTS[user_id] = prompt_msg.message_id
+    await callback_query.answer()
+
+@admin_router.callback_query(F.data == "admin_blacklist")
+async def callback_admin_blacklist(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    db = load_database()
+    black_list = db.get("blacklisted", [])
+    if not black_list:
+        text = "🚫 *Blacklisted Users*\n\nNo users are currently blacklisted."
+        await callback_query.message.edit_text(text=text, reply_markup=back_markup)
+    else:
+        USER_STATES[user_id] = "waiting_for_unban"
+        lines = [f"• `{uid}`" for uid in black_list]
+        text = (
+            "🚫 *Blacklisted Users List*\n\n" + "\n".join(lines) + 
+            "\n\nTo unban a user from the blacklist, enter their numeric User ID below (or send /start to cancel):"
+        )
+        prompt_msg = await callback_query.message.reply(text=text, reply_markup=ForceReply(selective=True))
+        ACTIVE_PROMPTS[user_id] = prompt_msg.message_id
+    await callback_query.answer()
+
+@admin_router.callback_query(F.data == "admin_toggle_doc")
+async def callback_admin_toggle_doc(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    state = toggle_document_mode(user_id)
+    status_str = "Enabled ✅" if state else "Disabled ❌"
+    await callback_query.answer(f"Doc Mode {status_str}", show_alert=True)
+    await callback_query.message.edit_reply_markup(reply_markup=get_admin_console_keyboard(user_id))
+
+@admin_router.callback_query(F.data == "admin_cookies_menu")
+async def callback_admin_cookies_menu(callback_query: CallbackQuery):
+    await callback_query.message.edit_text(
+        text="🍪 *Cookie Profile Jars*\nSelect a site-specific jar to view actions, download, or replace authentication values:",
+        reply_markup=get_cookies_menu_keyboard()
+    )
+    await callback_query.answer()
+
+@admin_router.callback_query(F.data.startswith("admin_cookie_select:"))
+async def callback_admin_cookie_select(callback_query: CallbackQuery):
+    cookie_key = callback_query.data.split(":")[1]
+    await callback_query.message.edit_text(
+        text=f"🍪 *Cookie Profile: {cookie_key}.txt*\nSelect an action to perform on this jar:",
+        reply_markup=get_cookie_action_keyboard(cookie_key)
+    )
+    await callback_query.answer()
+
+@admin_router.callback_query(F.data.startswith("admin_cookie_action:"))
+async def callback_admin_cookie_action(callback_query: CallbackQuery, bot: Bot):
+    parts = callback_query.data.split(":")
+    cookie_key = parts[1]
+    action = parts[2]
+    user_id = callback_query.from_user.id
+    
+    file_path = COOKIE_MAP.get(cookie_key)
+    if not file_path:
+        await callback_query.answer("❌ Invalid cookie profile.", show_alert=True)
+        return
+        
+    if action == "download":
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            await callback_query.answer("Delivering file...")
+            from utils.uploader import upload_file_direct_to_bale
+            await upload_file_direct_to_bale(
+                method="sendDocument",
+                chat_id=user_id,
+                file_path=file_path,
+                caption=f"🍪 *Cookie Jar:* `{cookie_key}.txt`"
+            )
+        else:
+            await callback_query.answer("⚠️ File is empty or does not exist yet.", show_alert=True)
+            
+    elif action == "replace":
+        USER_STATES[user_id] = f"waiting_for_replace_{cookie_key}"
+        prompt_msg = await callback_query.message.reply(
+            text=f"📝 *Replace Cookies for {cookie_key}.txt*\n"
+                 f"Please paste the cookie contents (Netscape format) below (or send /start to cancel):",
+            reply_markup=ForceReply(selective=True)
+        )
+        ACTIVE_PROMPTS[user_id] = prompt_msg.message_id
+        await callback_query.answer()
+
+@admin_router.callback_query(F.data == "admin_abort_queue")
+async def callback_admin_abort_queue(callback_query: CallbackQuery):
+    from utils.shared import queue
+    async with queue._lock:
+        queue._pending.clear()
+        queue._active = False
+    await callback_query.message.edit_text(
+        text="💥 *Active Transfer Queue Aborted*\nAll pending files and downloads in the queue have been successfully cleared.",
+        reply_markup=back_markup
+    )
+    await callback_query.answer("Queue cleared.", show_alert=True)
+
+@admin_router.callback_query(F.data == "admin_close")
+async def callback_admin_close(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    USER_STATES.pop(user_id, None)
+    await callback_query.message.delete()
+    await callback_query.answer("Console closed.")
