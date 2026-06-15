@@ -1,1 +1,3 @@
 apidocument/
+__pycache__/
+*.pyc
