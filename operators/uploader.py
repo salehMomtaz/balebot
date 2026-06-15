@@ -1,10 +1,28 @@
 # operators/uploader.py
 import os
+import re
 import asyncio
 import aiohttp
 from aiogram import Bot
 from utils.gate import is_document_mode
 import config
+
+def sanitize_filename_for_bale(filename: str) -> str:
+    """
+    Sanitizes and truncates a filename to prevent HTTP headers or multipart form errors on Bale.
+    Replaces colons, quotes, and unsafe characters with underscores, and limits length.
+    """
+    base, ext = os.path.splitext(filename)
+    # Replace unsafe characters and spaces with underscores
+    clean_base = re.sub(r'[\\/:*?"<>|\[\]()\'\s]+', '_', base)
+    # Ensure it's not excessively long (e.g. max 40 chars for base)
+    if len(clean_base) > 40:
+        clean_base = clean_base[:40].strip("_")
+    # Clean up multiple underscores
+    clean_base = re.sub(r'_+', '_', clean_base).strip("_")
+    if not clean_base:
+        clean_base = "file"
+    return f"{clean_base}{ext}"
 
 def clean_caption_text(text: str, max_len: int = 150) -> str:
     """
@@ -36,6 +54,8 @@ async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, 
     elif method == "sendAudio":
         field_name = "audio"
         
+    safe_filename = sanitize_filename_for_bale(os.path.basename(file_path))
+    
     async with aiohttp.ClientSession() as session:
         with open(file_path, "rb") as f:
             form = aiohttp.FormData()
@@ -48,7 +68,7 @@ async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, 
                     if v is not None:
                         form.add_field(k, str(v))
                         
-            form.add_field(field_name, f, filename=os.path.basename(file_path))
+            form.add_field(field_name, f, filename=safe_filename)
             
             async with session.post(url, data=form, timeout=1800) as response:
                 res_json = await response.json()
