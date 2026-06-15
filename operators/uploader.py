@@ -6,6 +6,22 @@ from aiogram import Bot
 from utils.gate import is_document_mode
 import config
 
+def clean_caption_text(text: str, max_len: int = 150) -> str:
+    """
+    Cleans and truncates a media title to guarantee safe, error-free caption delivery on Bale.
+    Removes Markdown syntax characters to prevent parser loop/crash rejections.
+    """
+    if not text:
+        return "Media File"
+    # Remove characters that trigger Markdown formatting or link parsing
+    cleaned = text.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "").replace("(", "").replace(")", "")
+    # Trim multiple spaces
+    cleaned = " ".join(cleaned.split())
+    # Limit length
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].strip() + "..."
+    return cleaned
+
 async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, caption: str = "", extra_params: dict = None) -> dict:
     """
     Directly uploads a file to Bale's API using standard multipart/form-data POST.
@@ -42,6 +58,8 @@ async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, 
 
 async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str, title: str, uploader: str, duration: int, thumb_path: str, progress_fn, force_document=False):
     """Sends a single media file to Bale using direct standard multipart uploads."""
+    safe_title = clean_caption_text(title)
+    
     if force_document or action == 'd':
         return await upload_file_direct_to_bale(
             method="sendDocument",
@@ -55,10 +73,10 @@ async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str,
             method="sendAudio",
             chat_id=chat_id,
             file_path=file_path,
-            caption=f"🎵 **{title}**\nUploaded via Downloader Bot",
+            caption=f"🎵 **{safe_title}**\nUploaded via Downloader Bot",
             extra_params={
-                "title": title,
-                "performer": uploader,
+                "title": safe_title,
+                "performer": clean_caption_text(uploader, 50),
                 "duration": int(duration)
             }
         )
@@ -70,7 +88,7 @@ async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str,
             method="sendVideo",
             chat_id=chat_id,
             file_path=file_path,
-            caption=f"🎥 **{title}**\nUploaded via Downloader Bot",
+            caption=f"🎥 **{safe_title}**\nUploaded via Downloader Bot",
             extra_params={
                 "width": width,
                 "height": height,
@@ -83,7 +101,7 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
     """
     On-Demand Sequential Uploader for Bale:
     Generates chunks one-by-one, uploads them, and immediately purges them from disk.
-    Caps VPS disk overhead to exactly ONE chunk size. Uses 48 MB boundaries to bypass Bale's 50 MB limit.
+    Caps VPS disk overhead to exactly ONE chunk size. Uses 39 MB boundaries to bypass Bale's 50 MB limit comfortably.
     """
     from operators.downloader import split_file_generator
     from main import progress_bar_handler
