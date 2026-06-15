@@ -454,7 +454,13 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
 
     meta = GITHUB_CACHE.get(gh_id)
     if not meta:
-        await callback_query.answer("⚠️ Session expired. Please resend your repository link.", show_alert=True)
+        try:
+            await callback_query.message.edit_text(
+                text="⚠️ *Session Ended*\n\nThis console session has expired or the bot has been restarted. Please send a new link to start a new session."
+            )
+        except Exception:
+            pass
+        await callback_query.answer("Session expired.", show_alert=True)
         return
 
     owner = meta["owner"]

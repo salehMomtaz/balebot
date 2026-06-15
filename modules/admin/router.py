@@ -67,19 +67,26 @@ async def admin_state_message_handler(message: Message, bot: Bot):
 
     prompt_id = ACTIVE_PROMPTS.pop(user_id, None)
 
+    # Clean up old prompt message to keep chat spotless
+    if prompt_id:
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=prompt_id)
+        except Exception:
+            pass
+
+    # Delete the user's incoming message containing the raw text input (User ID or cookies)
+    try:
+        await bot.delete_message(chat_id=user_id, message_id=message.message_id)
+    except Exception:
+        pass
+
     # A. Handle Cookie Replacement State
     if state.startswith("waiting_for_replace_"):
         USER_STATES.pop(user_id, None)
-        if prompt_id:
-            try:
-                await bot.delete_message(chat_id=user_id, message_id=prompt_id)
-            except Exception:
-                pass
-        
         cookie_key = state.split("waiting_for_replace_")[1]
         file_path = COOKIE_MAP.get(cookie_key)
         if not file_path:
-            await message.reply(text="❌ *Error:* Invalid cookie profile selected.", reply_markup=back_markup)
+            await bot.send_message(chat_id=user_id, text="❌ *Error:* Invalid cookie profile selected.", reply_markup=back_markup)
             return
             
         # Prepend Netscape headers automatically if missing
@@ -90,21 +97,17 @@ async def admin_state_message_handler(message: Message, bot: Bot):
         try:
             with open(file_path, "w") as f:
                 f.write(final_content)
-            await message.reply(text=f"✅ `{cookie_key}.txt` successfully replaced!", reply_markup=back_markup)
+            await bot.send_message(chat_id=user_id, text=f"✅ `{cookie_key}.txt` successfully replaced!", reply_markup=back_markup)
             await log_event(f"🍪 *Admin Action:* Cookie profile `{cookie_key}.txt` was replaced.")
         except Exception as e:
-            await message.reply(text=f"❌ *Failed to write cookie file:* {e}", reply_markup=back_markup)
+            await bot.send_message(chat_id=user_id, text=f"❌ *Failed to write cookie file:* {e}", reply_markup=back_markup)
         return
 
     # B. Handle User ID Input States (Add, Remove, Unban)
     if not is_valid_telegram_id(input_text):
         USER_STATES.pop(user_id, None)
-        if prompt_id:
-            try:
-                await bot.delete_message(chat_id=user_id, message_id=prompt_id)
-            except Exception:
-                pass
-        await message.reply(
+        await bot.send_message(
+            chat_id=user_id,
             text="❌ *Error:* Invalid User ID. Please input digits only (between 5 and 11 numbers).",
             reply_markup=back_markup
         )
@@ -112,35 +115,30 @@ async def admin_state_message_handler(message: Message, bot: Bot):
         
     target_id = int(input_text)
     USER_STATES.pop(user_id, None)
-    if prompt_id:
-        try:
-            await bot.delete_message(chat_id=user_id, message_id=prompt_id)
-        except Exception:
-            pass
     
     if state == "waiting_for_add_user":
         if add_user(target_id):
-            await message.reply(text=f"✅ User `{target_id}` authorized successfully.", reply_markup=back_markup)
+            await bot.send_message(chat_id=user_id, text=f"✅ User `{target_id}` authorized successfully.", reply_markup=back_markup)
             await log_event(f"👥 *User Whitelisted:* Creator whitelisted User ID `{target_id}`.")
         else:
-            await message.reply(text=f"ℹ️ User `{target_id}` was already authorized.", reply_markup=back_markup)
+            await bot.send_message(chat_id=user_id, text=f"ℹ️ User `{target_id}` was already authorized.", reply_markup=back_markup)
             
     elif state == "waiting_for_remove_user":
         db = load_database()
         if target_id not in db["authorized"]:
-            await message.reply(text=f"❌ *Error:* User ID `{target_id}` is not currently authorized.", reply_markup=back_markup)
+            await bot.send_message(chat_id=user_id, text=f"❌ *Error:* User ID `{target_id}` is not currently authorized.", reply_markup=back_markup)
             return
         if remove_user(target_id):
-            await message.reply(text=f"✅ User `{target_id}` has been removed.", reply_markup=back_markup)
+            await bot.send_message(chat_id=user_id, text=f"✅ User `{target_id}` has been removed.", reply_markup=back_markup)
             await log_event(f"👥 *User Revoked:* Creator removed User ID `{target_id}`.")
             
     elif state == "waiting_for_unban":
         db = load_database()
         if target_id not in db["blacklisted"]:
-            await message.reply(text=f"❌ *Error:* User ID `{target_id}` is not found in the blacklist.", reply_markup=back_markup)
+            await bot.send_message(chat_id=user_id, text=f"❌ *Error:* User ID `{target_id}` is not found in the blacklist.", reply_markup=back_markup)
             return
         if unblacklist_user(target_id):
-            await message.reply(text=f"✅ User `{target_id}` has been unbanned.", reply_markup=back_markup)
+            await bot.send_message(chat_id=user_id, text=f"✅ User `{target_id}` has been unbanned.", reply_markup=back_markup)
             await log_event(f"🔓 *User Unbanned:* Creator unbanned User ID `{target_id}`.")
 
 # =========================================================================
@@ -173,6 +171,7 @@ async def callback_admin_list(callback_query: CallbackQuery):
 async def callback_admin_add(callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     USER_STATES[user_id] = "waiting_for_add_user"
+    ACTIVE_PROMPTS[user_id] = callback_query.message.message_id
     
     await callback_query.message.edit_text(
         text="➕ *Add User*\nPlease enter the numeric User ID to authorize below, or press the button to cancel:",
@@ -184,6 +183,7 @@ async def callback_admin_add(callback_query: CallbackQuery):
 async def callback_admin_remove(callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     USER_STATES[user_id] = "waiting_for_remove_user"
+    ACTIVE_PROMPTS[user_id] = callback_query.message.message_id
     
     await callback_query.message.edit_text(
         text="➖ *Remove User*\nPlease enter the numeric User ID to revoke below, or press the button to cancel:",
@@ -201,6 +201,7 @@ async def callback_admin_blacklist(callback_query: CallbackQuery):
         await callback_query.message.edit_text(text=text, reply_markup=back_markup)
     else:
         USER_STATES[user_id] = "waiting_for_unban"
+        ACTIVE_PROMPTS[user_id] = callback_query.message.message_id
         lines = [f"• `{uid}`" for uid in black_list]
         text = (
             "🚫 *Blacklisted Users List*\n\n" + "\n".join(lines) + 
@@ -261,6 +262,7 @@ async def callback_admin_cookie_action(callback_query: CallbackQuery, bot: Bot):
             
     elif action == "replace":
         USER_STATES[user_id] = f"waiting_for_replace_{cookie_key}"
+        ACTIVE_PROMPTS[user_id] = callback_query.message.message_id
         await callback_query.message.edit_text(
             text=f"📝 *Replace Cookies for {cookie_key}.txt*\n"
                  f"Please paste the cookie contents (Netscape format) below, or press the button to cancel:",

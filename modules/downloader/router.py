@@ -173,7 +173,13 @@ async def dl_callback_handler(callback_query: CallbackQuery, bot: Bot):
     format_id = parts[3]
     cache_data = DOWNLOAD_CACHE.get(cache_id)
     if not cache_data:
-        await callback_query.answer("⚠️ Session expired or not found.", show_alert=True)
+        try:
+            await callback_query.message.edit_text(
+                text="⚠️ *Session Ended*\n\nThis download session has expired or the bot has been restarted. Please send the link again to start a new download."
+            )
+        except Exception:
+            pass
+        await callback_query.answer("Session expired or not found.", show_alert=True)
         return
         
     target_list = cache_data["videos"] if action == 'v' else cache_data["audios"]

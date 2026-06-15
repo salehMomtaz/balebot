@@ -90,8 +90,8 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
     
     file_size = os.path.getsize(file_path)
     
-    # Strict 48 MB split limit for Bale (48 MB = 48 * 1024 * 1024 bytes)
-    max_chunk_size = 48 * 1024 * 1024
+    # Strict 39 MB split limit for Bale to comfortably avoid 413 Payload Too Large errors
+    max_chunk_size = 39 * 1024 * 1024
     force_document = is_document_mode(chat_id) or action == 'd'
     
     is_split = file_size > max_chunk_size
