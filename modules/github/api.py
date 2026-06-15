@@ -8,8 +8,9 @@ def get_github_headers() -> dict:
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "balebot-github-assistant"
     }
-    if config.GITHUB_TOKEN:
-        headers["Authorization"] = f"token {config.GITHUB_TOKEN}"
+    github_token = (config.GITHUB_TOKEN or "").strip()
+    if github_token and github_token != "YOUR_GITHUB_PAT_HERE":
+        headers["Authorization"] = f"token {github_token}"
     return headers
 
 async def fetch_github_api(url: str) -> dict:

@@ -5,9 +5,14 @@ def get_repo_menu_keyboard(gh_id: str) -> InlineKeyboardMarkup:
     """Returns the main, compact control panel keyboard for GitHub repository links."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📥 Download (ZIP)", callback_data=f"gh:{gh_id}:zip")],
-        [InlineKeyboardButton(text="🌿 Branches", callback_data=f"gh:{gh_id}:branches"), InlineKeyboardButton(text="📜 Commits", callback_data=f"gh:{gh_id}:commits")],
+        [InlineKeyboardButton(text="🏷️ Releases", callback_data=f"gh:{gh_id}:releases"), InlineKeyboardButton(text="🌿 Branches", callback_data=f"gh:{gh_id}:branches")],
+        [InlineKeyboardButton(text="🏷️ Tags", callback_data=f"gh:{gh_id}:tags"), InlineKeyboardButton(text="🔀 Pull Requests", callback_data=f"gh:{gh_id}:pulls")],
+        [InlineKeyboardButton(text="💬 Discussions", callback_data=f"gh:{gh_id}:discussions"), InlineKeyboardButton(text="📋 Issues", callback_data=f"gh:{gh_id}:issues")],
+        [InlineKeyboardButton(text="📜 Commits", callback_data=f"gh:{gh_id}:commits"), InlineKeyboardButton(text="👥 Contributors", callback_data=f"gh:{gh_id}:contributors")],
+        [InlineKeyboardButton(text="📊 Info", callback_data=f"gh:{gh_id}:info"), InlineKeyboardButton(text="📊 Languages", callback_data=f"gh:{gh_id}:languages")],
+        [InlineKeyboardButton(text="📄 License", callback_data=f"gh:{gh_id}:license"), InlineKeyboardButton(text="🔗 Clone Link", callback_data=f"gh:{gh_id}:clone")],
         [InlineKeyboardButton(text="📖 README", callback_data=f"gh:{gh_id}:readme"), InlineKeyboardButton(text="📁 Files", callback_data=f"gh:{gh_id}:files")],
-        [InlineKeyboardButton(text="📊 Info", callback_data=f"gh:{gh_id}:info"), InlineKeyboardButton(text="❌ Close Console", callback_data=f"gh:{gh_id}:close")]
+        [InlineKeyboardButton(text="❌ Close Console", callback_data=f"gh:{gh_id}:close")]
     ])
 
 def get_back_keyboard(gh_id: str) -> InlineKeyboardMarkup:
@@ -19,18 +24,27 @@ def get_back_keyboard(gh_id: str) -> InlineKeyboardMarkup:
 def get_branches_keyboard(gh_id: str, branches: list) -> InlineKeyboardMarkup:
     """Generates inline buttons for every branch. Clicking a branch downloads its ZIP."""
     keyboard_rows = []
-    for branch in branches[:10]:  # Limit to top 10 branches for UI safety
+    for index, branch in enumerate(branches[:10]):  # Limit to top 10 branches for UI safety
         name = branch["name"]
-        keyboard_rows.append([InlineKeyboardButton(text=f"🌿 {name}", callback_data=f"gh:{gh_id}:branch_select:{name}")])
+        keyboard_rows.append([InlineKeyboardButton(text=f"🌿 {name}", callback_data=f"gh:{gh_id}:branch:{index}")])
     keyboard_rows.append([InlineKeyboardButton(text="◀️ Back to Repo Menu", callback_data=f"gh:{gh_id}:back")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
 def get_releases_keyboard(gh_id: str, releases: list) -> InlineKeyboardMarkup:
     """Generates inline buttons to download assets of specific release versions."""
     keyboard_rows = []
-    for rel in releases[:5]:  # Limit to last 5 releases for UI safety
+    for index, rel in enumerate(releases[:10]):  # Limit to last 10 releases for UI safety
         tag = rel["tag_name"]
-        keyboard_rows.append([InlineKeyboardButton(text=f"📦 Download {tag}", callback_data=f"gh:{gh_id}:rel_select:{tag}")])
+        keyboard_rows.append([InlineKeyboardButton(text=f"📦 Download {tag}", callback_data=f"gh:{gh_id}:release:{index}")])
+    keyboard_rows.append([InlineKeyboardButton(text="◀️ Back to Repo Menu", callback_data=f"gh:{gh_id}:back")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+
+def get_tags_keyboard(gh_id: str, tags: list) -> InlineKeyboardMarkup:
+    """Generates inline buttons to download the ZIP of specific tag versions."""
+    keyboard_rows = []
+    for index, tag in enumerate(tags[:10]):  # Limit to top 10 tags for UI safety
+        name = tag["name"]
+        keyboard_rows.append([InlineKeyboardButton(text=f"🏷️ {name}", callback_data=f"gh:{gh_id}:tag:{index}")])
     keyboard_rows.append([InlineKeyboardButton(text="◀️ Back to Repo Menu", callback_data=f"gh:{gh_id}:back")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -40,6 +54,7 @@ def get_files_explorer_keyboard(gh_id: str, items: list, path: str, page: int) -
     Splits items into 8-per-page lists with Back, Up, and Page navigation buttons.
     """
     keyboard_rows = []
+    keyboard_rows.append([InlineKeyboardButton(text="📦 Download Current Folder", callback_data=f"gh:{gh_id}:file_zip")])
     
     # 1. Add Parent Directory navigation button if we are inside a subfolder
     if path != "/":
@@ -56,8 +71,7 @@ def get_files_explorer_keyboard(gh_id: str, items: list, path: str, page: int) -
         actual_index = start_idx + idx
         
         # Format labels
-        emoji = "📁" if item_type == "dir" else "📄"
-        label = f"{emoji} {name}"
+        label = f"📁 {name}" if item_type == "dir" else f"📄 {name} · Download"
         keyboard_rows.append([InlineKeyboardButton(text=label, callback_data=f"gh:{gh_id}:file_nav:{actual_index}")])
         
     # 3. Add Pagination Buttons

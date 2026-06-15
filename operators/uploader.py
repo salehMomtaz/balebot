@@ -42,7 +42,7 @@ async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, 
 
 async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str, title: str, uploader: str, duration: int, thumb_path: str, progress_fn, force_document=False):
     """Sends a single media file to Bale using direct standard multipart uploads."""
-    if force_document:
+    if force_document or action == 'd':
         return await upload_file_direct_to_bale(
             method="sendDocument",
             chat_id=chat_id,
@@ -63,7 +63,7 @@ async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str,
             }
         )
     else:  # action == 'v'
-        from utils.downloader import probe_video_dimensions
+        from operators.downloader import probe_video_dimensions
         width, height, parsed_duration = probe_video_dimensions(file_path)
         final_duration = parsed_duration if parsed_duration > 0 else int(duration)
         return await upload_file_direct_to_bale(
@@ -85,14 +85,14 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
     Generates chunks one-by-one, uploads them, and immediately purges them from disk.
     Caps VPS disk overhead to exactly ONE chunk size. Uses 48 MB boundaries to bypass Bale's 50 MB limit.
     """
-    from utils.downloader import split_file_generator
+    from operators.downloader import split_file_generator
     from main import progress_bar_handler
     
     file_size = os.path.getsize(file_path)
     
     # Strict 48 MB split limit for Bale (48 MB = 48 * 1024 * 1024 bytes)
     max_chunk_size = 48 * 1024 * 1024
-    force_document = is_document_mode(chat_id)
+    force_document = is_document_mode(chat_id) or action == 'd'
     
     is_split = file_size > max_chunk_size
     parts_list = []
