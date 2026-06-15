@@ -164,7 +164,7 @@ async def youtube_transcript_handler(message: Message, bot: Bot):
                 f.write(clean_text)
             await status_msg.edit_text("📤 Delivering transcript document...")
             
-            from utils.uploader import upload_file_direct_to_bale
+            from operators.uploader import upload_file_direct_to_bale
             await upload_file_direct_to_bale(
                 method="sendDocument",
                 chat_id=user_id,

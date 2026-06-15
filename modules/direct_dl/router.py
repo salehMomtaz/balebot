@@ -38,7 +38,7 @@ async def webpage_extractor_handler(message: Message, bot: Bot):
                 f.write(f"="*40 + "\n\n")
                 f.write(markdown_text)
                 
-            from utils.uploader import upload_file_direct_to_bale
+            from operators.uploader import upload_file_direct_to_bale
             await upload_file_direct_to_bale(
                 method="sendDocument",
                 chat_id=user_id,

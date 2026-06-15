@@ -12,3 +12,8 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro  # Mount SSL certificates as read-only
     environment:
       - PYTHONUNBUFFERED=1
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'        # Limit container utilization to max 80% of a single CPU core
+          memory: 512M      # Limit container RAM quota to 1GB to protect the VPS from spikes

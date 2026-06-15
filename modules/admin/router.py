@@ -174,11 +174,10 @@ async def callback_admin_add(callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     USER_STATES[user_id] = "waiting_for_add_user"
     
-    prompt_msg = await callback_query.message.reply(
-        text="➕ *Add User*\nPlease enter the numeric User ID to authorize (or send /start to cancel):",
-        reply_markup=ForceReply(selective=True)
+    await callback_query.message.edit_text(
+        text="➕ *Add User*\nPlease enter the numeric User ID to authorize below, or press the button to cancel:",
+        reply_markup=back_markup
     )
-    ACTIVE_PROMPTS[user_id] = prompt_msg.message_id
     await callback_query.answer()
 
 @admin_router.callback_query(F.data == "admin_remove")
@@ -186,11 +185,10 @@ async def callback_admin_remove(callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     USER_STATES[user_id] = "waiting_for_remove_user"
     
-    prompt_msg = await callback_query.message.reply(
-        text="➖ *Remove User*\nPlease enter the numeric User ID to revoke (or send /start to cancel):",
-        reply_markup=ForceReply(selective=True)
+    await callback_query.message.edit_text(
+        text="➖ *Remove User*\nPlease enter the numeric User ID to revoke below, or press the button to cancel:",
+        reply_markup=back_markup
     )
-    ACTIVE_PROMPTS[user_id] = prompt_msg.message_id
     await callback_query.answer()
 
 @admin_router.callback_query(F.data == "admin_blacklist")
@@ -206,10 +204,9 @@ async def callback_admin_blacklist(callback_query: CallbackQuery):
         lines = [f"• `{uid}`" for uid in black_list]
         text = (
             "🚫 *Blacklisted Users List*\n\n" + "\n".join(lines) + 
-            "\n\nTo unban a user from the blacklist, enter their numeric User ID below (or send /start to cancel):"
+            "\n\nTo unban a user from the blacklist, enter their numeric User ID below, or press the button to cancel:"
         )
-        prompt_msg = await callback_query.message.reply(text=text, reply_markup=ForceReply(selective=True))
-        ACTIVE_PROMPTS[user_id] = prompt_msg.message_id
+        await callback_query.message.edit_text(text=text, reply_markup=back_markup)
     await callback_query.answer()
 
 @admin_router.callback_query(F.data == "admin_toggle_doc")
@@ -252,7 +249,7 @@ async def callback_admin_cookie_action(callback_query: CallbackQuery, bot: Bot):
     if action == "download":
         if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             await callback_query.answer("Delivering file...")
-            from utils.uploader import upload_file_direct_to_bale
+            from operators.uploader import upload_file_direct_to_bale
             await upload_file_direct_to_bale(
                 method="sendDocument",
                 chat_id=user_id,
@@ -264,12 +261,11 @@ async def callback_admin_cookie_action(callback_query: CallbackQuery, bot: Bot):
             
     elif action == "replace":
         USER_STATES[user_id] = f"waiting_for_replace_{cookie_key}"
-        prompt_msg = await callback_query.message.reply(
+        await callback_query.message.edit_text(
             text=f"📝 *Replace Cookies for {cookie_key}.txt*\n"
-                 f"Please paste the cookie contents (Netscape format) below (or send /start to cancel):",
-            reply_markup=ForceReply(selective=True)
+                 f"Please paste the cookie contents (Netscape format) below, or press the button to cancel:",
+            reply_markup=back_markup
         )
-        ACTIVE_PROMPTS[user_id] = prompt_msg.message_id
         await callback_query.answer()
 
 @admin_router.callback_query(F.data == "admin_abort_queue")
