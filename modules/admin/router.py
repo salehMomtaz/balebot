@@ -102,6 +102,31 @@ async def admin_state_message_handler(message: Message, bot: Bot):
         except Exception as e:
             await bot.send_message(chat_id=user_id, text=f"❌ *Failed to write cookie file:* {e}", reply_markup=back_markup)
         return
+    if state == "waiting_for_setlimit":
+        USER_STATES.pop(user_id, None)
+        parts = input_text.split()
+        if len(parts) != 2:
+            await message.reply("Invalid format. Use: <key> <value_mb>")
+            return
+
+        key, raw_value = parts[0], parts[1]
+        valid_keys = {"bale_hard_limit_mb", "split_target_mb", "binary_chunk_mb"}
+        if key not in valid_keys:
+            await message.reply(f"Unknown key. Allowed: {', '.join(sorted(valid_keys))}")
+            return
+
+        try:
+            value = int(raw_value)
+            if value <= 0:
+                raise ValueError
+        except ValueError:
+            await message.reply("Value must be a positive integer (MB).")
+            return
+
+        shared.set_setting_mb(key, value)
+        await message.reply(f"Updated {key} = {value} MB")
+        logger.info(f"Admin {user_id} set runtime {key}={value}")
+        return
 
     # B. Handle User ID Input States (Add, Remove, Unban)
     if not is_valid_telegram_id(input_text):
@@ -218,6 +243,27 @@ async def callback_admin_toggle_doc(callback_query: CallbackQuery):
     await callback_query.answer(f"Doc Mode {status_str}", show_alert=True)
     await callback_query.message.edit_reply_markup(reply_markup=get_admin_console_keyboard(user_id))
 
+@admin_router.callback_query(F.data == "admin_setlimit")
+async def callback_admin_setlimit(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    if user_id != config.SYSTEM_CREATOR_ID:
+        await callback_query.answer("Unauthorized", show_alert=True)
+        return
+
+    USER_STATES[user_id] = "waiting_for_setlimit"
+    current = (
+        f"bale_hard_limit_mb = {shared.RUNTIME_SETTINGS['bale_hard_limit_mb']}\n"
+        f"split_target_mb    = {shared.RUNTIME_SETTINGS['split_target_mb']}\n"
+        f"binary_chunk_mb    = {shared.RUNTIME_SETTINGS['binary_chunk_mb']}"
+    )
+    await callback_query.message.edit_text(
+        "Send: <key> <value_mb>\n\n"
+        f"Current values:\n{current}\n\n"
+        "Example: split_target_mb 1900",
+        reply_markup=back_markup,
+    )
+    await callback_query.answer()
+    
 @admin_router.callback_query(F.data == "admin_cookies_menu")
 async def callback_admin_cookies_menu(callback_query: CallbackQuery):
     await callback_query.message.edit_text(

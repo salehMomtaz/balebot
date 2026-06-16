@@ -13,7 +13,8 @@ def get_admin_console_keyboard(user_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👥 List Users", callback_data="admin_list"), InlineKeyboardButton(text="➕ Add User", callback_data="admin_add")],
         [InlineKeyboardButton(text="➖ Remove User", callback_data="admin_remove"), InlineKeyboardButton(text="🚫 Blacklist Logs", callback_data="admin_blacklist")],
         [InlineKeyboardButton(text=f"📄 Doc Mode: {doc_status}", callback_data="admin_toggle_doc"), InlineKeyboardButton(text="🍪 Cookie Jars", callback_data="admin_cookies_menu")],
-        [InlineKeyboardButton(text="💥 Abort Transfer", callback_data="admin_abort_queue"), InlineKeyboardButton(text="❌ Close Console", callback_data="admin_close")]
+        [InlineKeyboardButton(text="💥 Abort Transfer", callback_data="admin_abort_queue"), [InlineKeyboardButton(text="⚙️ Set Size Limits", callback_data="admin_setlimit")],
+        [InlineKeyboardButton(text="❌ Close Console", callback_data="admin_close")]
     ])
 
 def get_cookies_menu_keyboard() -> InlineKeyboardMarkup:
