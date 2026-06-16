@@ -4,6 +4,7 @@ import subprocess
 import yt_dlp
 import ffmpeg
 import config
+import math
 
 def get_cookies_for_url(url: str) -> str | None:
     """Return the correct cookie path based on the domain, falling back to a global cookies.txt file."""
@@ -278,3 +279,84 @@ def split_file_generator(file_path: str, max_chunk_size_bytes: int):
                 if os.path.exists(part_path):
                     os.remove(part_path)
                 raise e
+def split_video_by_size_generator(file_path: str, target_size_bytes: int, hard_limit_bytes: int):
+    """
+    On-Demand video splitter using ffmpeg (-c copy, keyframe cuts).
+    Yields paths of independently playable segments one-by-one.
+    Estimates segment duration from target size, then verifies each output
+    against the hard limit and re-cuts with shorter duration if exceeded.
+    """
+    import subprocess, json
+
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    file_size = os.path.getsize(file_path)
+    if file_size <= target_size_bytes:
+        yield file_path
+        return
+
+    # Probe total duration
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json",
+         "-show_format", file_path],
+        capture_output=True, text=True
+    )
+    total_duration = float(json.loads(probe.stdout)["format"]["duration"])
+
+    # Average bitrate (bytes/sec) -> seconds per target chunk
+    bytes_per_sec = file_size / total_duration
+    base_seg_seconds = max(1.0, target_size_bytes / bytes_per_sec)
+
+    dir_name = os.path.dirname(file_path)
+    basename = os.path.basename(file_path)
+    root, ext = os.path.splitext(basename)
+    if not ext:
+        ext = ".mp4"
+
+    start = 0.0
+    part_num = 1
+    seg_seconds = base_seg_seconds
+
+    while start < total_duration - 0.1:
+        part_path = os.path.join(dir_name, f"{root}.part{part_num:03d}{ext}")
+        attempt_seconds = seg_seconds
+
+        try:
+            for _ in range(5):  # retry loop to respect hard limit
+                cmd = [
+                    "ffmpeg", "-y", "-ss", f"{start:.3f}",
+                    "-i", file_path, "-t", f"{attempt_seconds:.3f}",
+                    "-c", "copy", "-avoid_negative_ts", "make_zero",
+                    part_path
+                ]
+                subprocess.run(cmd, capture_output=True, check=True)
+
+                if not os.path.exists(part_path) or os.path.getsize(part_path) == 0:
+                    raise RuntimeError("ffmpeg produced empty segment")
+
+                if os.path.getsize(part_path) <= hard_limit_bytes:
+                    break
+
+                # Too big (keyframe spacing); shrink and retry
+                os.remove(part_path)
+                attempt_seconds *= 0.75
+            else:
+                # Could not get under hard limit after retries
+                raise RuntimeError(
+                    f"Segment exceeds hard limit even after retries: {part_path}"
+                )
+
+            yield part_path
+
+            start += attempt_seconds
+            part_num += 1
+            # Adapt next estimate from the actual yielded size
+            actual = os.path.getsize(part_path) if os.path.exists(part_path) else target_size_bytes
+            if actual > 0:
+                seg_seconds = max(1.0, attempt_seconds * (target_size_bytes / actual))
+
+        except Exception as e:
+            if os.path.exists(part_path):
+                os.remove(part_path)
+            raise e

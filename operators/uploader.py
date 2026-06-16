@@ -6,6 +6,7 @@ import aiohttp
 from aiogram import Bot
 from utils.gate import is_document_mode
 import config
+from utils import shared
 
 def sanitize_filename_for_bale(filename: str) -> str:
     """
@@ -123,22 +124,38 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
     Generates chunks one-by-one, uploads them, and immediately purges them from disk.
     Caps VPS disk overhead to exactly ONE chunk size. Uses 39 MB boundaries to bypass Bale's 50 MB limit comfortably.
     """
-    from operators.downloader import split_file_generator
+    from operators.downloader import split_file_generator, split_video_by_size_generator
     from main import progress_bar_handler
-    
+    import utils.shared as shared
+
     file_size = os.path.getsize(file_path)
-    
-    # Strict 39 MB split limit for Bale to comfortably avoid 413 Payload Too Large errors
-    max_chunk_size = 39 * 1024 * 1024
+
+    # Dynamic limits from runtime settings (admin-adjustable, no restart)
+
+    rs = shared.RUNTIME_SETTINGS
+    is_video = action == 'v'
+
+    if is_video:
+        target_bytes = rs["split_target_mb"] * 1024 * 1024
+        hard_bytes = rs["split_hard_mb"] * 1024 * 1024
+        max_chunk_size = target_bytes
+    else:
+        max_chunk_size = rs["binary_chunk_mb"] * 1024 * 1024
+
     force_document = is_document_mode(chat_id) or action == 'd'
-    
+
     is_split = file_size > max_chunk_size
     parts_list = []
     
     try:
         part_num = 1
         loop = asyncio.get_event_loop()
-        generator = split_file_generator(file_path, max_chunk_size)
+        
+        if is_video:
+            generator = split_video_by_size_generator(file_path, target_bytes, hard_bytes)
+        else:
+            generator = split_file_generator(file_path, max_chunk_size)
+
         
         while True:
             def get_next_part():
