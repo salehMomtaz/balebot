@@ -15,6 +15,7 @@ from utils.gate import (
 from utils.id_validator import is_valid_telegram_id
 from modules.admin.keyboards import get_admin_console_keyboard, get_cookies_menu_keyboard, get_cookie_action_keyboard, back_markup
 from modules.admin.cookies import COOKIE_MAP
+import shared
 
 admin_router = Router()
 
