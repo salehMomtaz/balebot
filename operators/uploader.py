@@ -42,7 +42,6 @@ def clean_caption_text(text: str, max_len: int = 150) -> str:
     return cleaned
 
 async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, caption: str = "", extra_params: dict = None, thumb_path: str = None) -> dict:
-d_file_direct_to_bale(method: str, chat_id: int, file_path: str, caption: str = "", extra_params: dict = None) -> dict:
     """
     Directly uploads a file to Bale's API using standard multipart/form-data POST.
     Bypasses framework-specific serialization limitations completely to guarantee successful delivery.
@@ -56,7 +55,7 @@ d_file_direct_to_bale(method: str, chat_id: int, file_path: str, caption: str = 
     elif method == "sendAudio":
         field_name = "audio"
         
-    safe_filename = sanitize_filename_for_bale(os.path.basename(file_path))]
+    safe_filename = sanitize_filename_for_bale(os.path.basename(file_path))
     async with aiohttp.ClientSession() as session:
         thumb_file = None
         try:
