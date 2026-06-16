@@ -177,12 +177,33 @@ async def main_engine():
     except Exception as e:
         print(f"[Polling] Warning: Failed to drop pending updates: {e}")
 
-    # Run standard long polling and background tasks concurrently (No ports opened!)
-    await asyncio.gather(
+    # Concurrently launch the Direct Download API Web Server if present
+    tasks = [
         dp.start_polling(bot),
         auto_update_ytdlp(),
         auto_clean_cache_directory()
-    )
+    ]
+    
+    try:
+        from modules.direct_dl.api import app
+        config_uv = uvicorn.Config(
+            app, 
+            host="0.0.0.0", 
+            port=9090, 
+            ssl_certfile=config.SSL_CERT_PATH or None, 
+            ssl_keyfile=config.SSL_KEY_PATH or None
+        )
+        server = uvicorn.Server(config_uv)
+        # Create background task for FastAPI so it runs alongside polling
+        tasks.append(server.serve())
+        print("[API] Direct Download Web Server linked and running on port 9090.")
+    except ImportError:
+        print("[API] Direct Download API (modules/direct_dl/api.py) not loaded/present. Web server skipped.")
+    except Exception as e:
+        print(f"[API] Warning: Failed to initialize Direct Download Web Server: {e}")
+
+    # Run standard long polling and background tasks concurrently
+    await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
     import sys

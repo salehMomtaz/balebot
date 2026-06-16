@@ -30,8 +30,19 @@ def load_database() -> dict:
         return default_db
 
 def save_database(data: dict):
-    with open(config.DB_FILE, 'w') as f:
-        json.dump(data, f)
+    """Atomically saves the database to prevent disk-write corruption."""
+    tmp_file = f"{config.DB_FILE}.tmp"
+    try:
+        with open(tmp_file, 'w') as f:
+            json.dump(data, f, indent=4)
+        os.replace(tmp_file, config.DB_FILE)
+    except Exception as e:
+        if os.path.exists(tmp_file):
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass
+        raise e
 
 def is_authorized(user_id: int) -> bool:
     if user_id == config.SYSTEM_CREATOR_ID:

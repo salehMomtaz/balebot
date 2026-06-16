@@ -41,7 +41,7 @@ def clean_caption_text(text: str, max_len: int = 150) -> str:
         cleaned = cleaned[:max_len].strip() + "..."
     return cleaned
 
-async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, caption: str = "", extra_params: dict = None) -> dict:
+async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, caption: str = "", extra_params: dict = None, thumb_path: str = None) -> dict:
     """
     Directly uploads a file to Bale's API using standard multipart/form-data POST.
     Bypasses framework-specific serialization limitations completely to guarantee successful delivery.
@@ -56,26 +56,35 @@ async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, 
         field_name = "audio"
         
     safe_filename = sanitize_filename_for_bale(os.path.basename(file_path))
-    
     async with aiohttp.ClientSession() as session:
-        with open(file_path, "rb") as f:
-            form = aiohttp.FormData()
-            form.add_field("chat_id", str(chat_id))
-            if caption:
-                form.add_field("caption", caption)
-                
-            if extra_params:
-                for k, v in extra_params.items():
-                    if v is not None:
-                        form.add_field(k, str(v))
-                        
-            form.add_field(field_name, f, filename=safe_filename)
-            
-            async with session.post(url, data=form, timeout=1800) as response:
-                res_json = await response.json()
-                if not res_json.get("ok"):
-                    raise RuntimeError(f"Bale API Error: {res_json.get('description', 'Unknown')}")
-                return res_json
+        thumb_file = None
+        try:
+            with open(file_path, "rb") as f:
+                form = aiohttp.FormData()
+                form.add_field("chat_id", str(chat_id))
+                if caption:
+                    form.add_field("caption", caption)
+
+                if extra_params:
+                    for k, v in extra_params.items():
+                        if v is not None:
+                            form.add_field(k, str(v))
+
+                form.add_field(field_name, f, filename=safe_filename)
+
+                # Attach thumbnail (only valid for video/audio/document on Bale)
+                if thumb_path and os.path.isfile(thumb_path):
+                    thumb_file = open(thumb_path, "rb")
+                    form.add_field("thumbnail", thumb_file, filename="thumb.jpg")
+
+                async with session.post(url, data=form, timeout=1800) as response:
+                    res_json = await response.json()
+                    if not res_json.get("ok"):
+                        raise RuntimeError(f"Bale API Error: {res_json.get('description', 'Unknown')}")
+                    return res_json
+        finally:
+            if thumb_file:
+                thumb_file.close()
 
 async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str, title: str, uploader: str, duration: int, thumb_path: str, progress_fn, force_document=False):
     """Sends a single media file to Bale using direct standard multipart uploads."""
@@ -86,7 +95,8 @@ async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str,
             method="sendDocument",
             chat_id=chat_id,
             file_path=file_path,
-            caption=f"📁 **Part:** `{os.path.basename(file_path)}`"
+            caption=f"📁 **Part:** `{os.path.basename(file_path)}`",
+            thumb_path=thumb_path
         )
         
     if action == 'a':
@@ -95,6 +105,7 @@ async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str,
             chat_id=chat_id,
             file_path=file_path,
             caption=f"🎵 **{safe_title}**\nUploaded via Downloader Bot",
+            thumb_path=thumb_path,
             extra_params={
                 "title": safe_title,
                 "performer": clean_caption_text(uploader, 50),
@@ -110,6 +121,7 @@ async def send_single_media(bot: Bot, chat_id: int, file_path: str, action: str,
             chat_id=chat_id,
             file_path=file_path,
             caption=f"🎥 **{safe_title}**\nUploaded via Downloader Bot",
+            thumb_path=thumb_path,
             extra_params={
                 "width": width,
                 "height": height,
@@ -131,20 +143,20 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
     file_size = os.path.getsize(file_path)
 
     # Dynamic limits from runtime settings (admin-adjustable, no restart)
-
     rs = shared.RUNTIME_SETTINGS
     is_video = action == 'v'
 
     if is_video:
         target_bytes = rs["split_target_mb"] * 1024 * 1024
-        hard_bytes = rs["split_hard_mb"] * 1024 * 1024
+        hard_bytes = rs["bale_hard_limit_mb"] * 1024 * 1024
         max_chunk_size = target_bytes
     else:
         max_chunk_size = rs["binary_chunk_mb"] * 1024 * 1024
 
-    force_document = is_document_mode(chat_id) or action == 'd'
-
     is_split = file_size > max_chunk_size
+    
+    force_document = is_document_mode(chat_id) or action == 'd' or (is_split and not is_video)
+
     parts_list = []
     
     try:
@@ -156,7 +168,6 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
         else:
             generator = split_file_generator(file_path, max_chunk_size)
 
-        
         while True:
             def get_next_part():
                 try:
@@ -184,9 +195,9 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
                 title=title if not is_split else f"{title} (Part {part_num})",
                 uploader=uploader,
                 duration=duration,
-                thumb_path=thumb_path if not is_split else None,
+                thumb_path=thumb_path,
                 progress_fn=upload_progress,
-                force_document=force_document or is_split
+                force_document=force_document
             )
             
             if part_path != file_path:

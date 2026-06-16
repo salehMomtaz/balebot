@@ -1,3 +1,4 @@
+# utils/queue_manager.py
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -9,7 +10,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class QueueTask:
     user_id: int
-    message: object                       # Pyrogram Message to update with status
+    message: object                       # aiogram Message to update with status
     coroutine: Callable[[], Awaitable]    # Zero-argument async function to run when ready
     task_id: str = field(default_factory=lambda: uuid4().hex)
 
@@ -84,12 +85,15 @@ class DownloadQueue:
         async with self._lock:
             waiting_copy = list(self._pending)
 
-        # Release the lock and update each user sequentially
+        # Release the lock and update each user in parallel to eliminate queue bottlenecks
+        tasks = []
         for idx, task in enumerate(waiting_copy, start=1):
-            await self._safe_edit(
+            tasks.append(self._safe_edit(
                 task.message,
                 f"⏳ Your request has been queued. Position in line: #{idx}"
-            )
+            ))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     @staticmethod
     async def _safe_edit(message, text: str) -> None:

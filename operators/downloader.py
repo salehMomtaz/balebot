@@ -1,4 +1,4 @@
-# utils/downloader.py
+# operators/downloader.py
 import os
 import subprocess
 import yt_dlp
@@ -71,6 +71,7 @@ def extract_formats(url: str) -> dict:
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
+        'noplaylist': True,
     }
     if cookie_path:
         ydl_opts['cookiefile'] = cookie_path
@@ -177,6 +178,7 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
         'outtmpl': out_tmpl,
         'quiet': True,
         'no_warnings': True,
+        'noplaylist': True,
     }
     if cookie_path:
         ydl_opts['cookiefile'] = cookie_path
@@ -279,6 +281,7 @@ def split_file_generator(file_path: str, max_chunk_size_bytes: int):
                 if os.path.exists(part_path):
                     os.remove(part_path)
                 raise e
+
 def split_video_by_size_generator(file_path: str, target_size_bytes: int, hard_limit_bytes: int):
     """
     On-Demand video splitter using ffmpeg (-c copy, keyframe cuts).
@@ -296,13 +299,22 @@ def split_video_by_size_generator(file_path: str, target_size_bytes: int, hard_l
         yield file_path
         return
 
-    # Probe total duration
-    probe = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json",
-         "-show_format", file_path],
-        capture_output=True, text=True
-    )
-    total_duration = float(json.loads(probe.stdout)["format"]["duration"])
+    # Probe total duration securely
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_format", file_path],
+            capture_output=True, text=True
+        )
+        probe_data = json.loads(probe.stdout)
+        total_duration = float(probe_data.get("format", {}).get("duration", 0.0))
+    except Exception:
+        total_duration = 0.0
+
+    if total_duration <= 0.0:
+        # Fallback: if we cannot probe duration, split is impossible. Yield as single part.
+        yield file_path
+        return
 
     # Average bitrate (bytes/sec) -> seconds per target chunk
     bytes_per_sec = file_size / total_duration

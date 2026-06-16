@@ -37,6 +37,10 @@ class BaleChannelHandler(logging.Handler):
             # Escape backticks to prevent Markdown parsing exceptions in Bale
             clean_entry = log_entry.replace("`", "'")
             
+            # Truncate to prevent payload size errors on long traceback logs
+            if len(clean_entry) > 3500:
+                clean_entry = clean_entry[:3500] + "\n... [TRUNCATED] ..."
+            
             # Format using Bale's standard Markdown specifications
             text_payload = (
                 f"{emoji} *[{level}]* `[{timestamp}]` _({module})_\n\n"
