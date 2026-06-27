@@ -9,12 +9,15 @@ async def fetch_markdown_text(url: str) -> tuple[str, str]:
     """
     encoded_url = urllib.parse.quote(url, safe="")
     api_url = f"https://urltomarkdown.herokuapp.com/?url={encoded_url}&title=true&links=false"
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(api_url, timeout=20) as response:
+
+    timeout = aiohttp.ClientTimeout(total=20, connect=10)
+    import config
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        proxy = getattr(config, "AIOHTTP_PROXY", None)
+        async with session.get(api_url, proxy=proxy) as response:
             if response.status != 200:
                 raise RuntimeError(f"urltomarkdown API returned HTTP error: {response.status}")
-            
+
             raw_title = response.headers.get("X-Title", "Webpage")
             title = urllib.parse.unquote(raw_title).strip()
             markdown_text = await response.text()

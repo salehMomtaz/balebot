@@ -15,7 +15,22 @@ from utils.shared import queue, DOWNLOAD_CACHE, LAST_UPDATE_TIME
 # =========================================================================
 
 BALE_API_SERVER = TelegramAPIServer.from_base("https://tapi.bale.ai")
-bale_session = AiohttpSession(api=BALE_API_SERVER)
+
+# Optional proxy for the Bale/aiogram connection itself. Usually not needed because
+# api.bale.ai is not blocked, but it is exposed for completeness.
+def _build_bale_session():
+    proxy = getattr(config, "AIOHTTP_PROXY", None)
+    if proxy:
+        try:
+            return AiohttpSession(api=BALE_API_SERVER, proxy=proxy)
+        except RuntimeError as exc:
+            if "aiohttp-socks" in str(exc).lower():
+                print(f"[Proxy] aiohttp-socks not installed; Bale connection will bypass proxy.")
+                return AiohttpSession(api=BALE_API_SERVER)
+            raise
+    return AiohttpSession(api=BALE_API_SERVER)
+
+bale_session = _build_bale_session()
 
 bot = Bot(token=config.BALE_TOKEN, session=bale_session)
 dp = Dispatcher()
@@ -38,8 +53,15 @@ def setup_system_logger():
             handler = BaleChannelHandler(config.BALE_TOKEN, config.LOG_CHANNEL_ID)
             handler.setFormatter(formatter)
             handler.setLevel(logging.INFO)  # Capture standard INFO, WARNING, and ERROR logs
-            
+
+            # Also mirror the same logs to a local file for real-time debugging
+            from utils.logger import ensure_local_log_handler
+            local_handler = ensure_local_log_handler()
+            local_handler.setFormatter(formatter)
+            local_handler.setLevel(logging.INFO)
+
             root_logger.addHandler(handler)
+            root_logger.addHandler(local_handler)
             print("[Logger] Standalone Bale Logging Service linked to Root Logger.")
         except Exception as e:
             print(f"Warning: Failed to initialize standalone Bale logger: {e}")
@@ -201,9 +223,7 @@ async def main_engine():
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
-    import sys
     try:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(main_engine())
+        asyncio.run(main_engine())
     except KeyboardInterrupt:
         print("Stopping bot gracefully...")

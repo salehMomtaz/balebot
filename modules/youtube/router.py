@@ -72,7 +72,12 @@ async def youtube_recent_handler(message: Message):
         url = f"https://www.youtube.com/{clean_channel}/videos"
         loop = asyncio.get_event_loop()
         def extract():
-            ydl_opts = {'quiet': True, 'extract_flat': True, 'skip_download': True}
+            ydl_opts = {
+                'quiet': True,
+                'extract_flat': True,
+                'skip_download': True,
+                'proxy': getattr(config, 'YTDLP_PROXY', None),
+            }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=False)
         info = await loop.run_in_executor(None, extract)
@@ -140,7 +145,8 @@ async def youtube_transcript_handler(message: Message, bot: Bot):
                 'writesubtitles': True,
                 'subtitleslangs': ['en', 'fa', 'auto'],
                 'outtmpl': f"{task_dir}/subtitle",
-                'cookiefile': config.YT_COOKIES if os.path.exists(config.YT_COOKIES) else None
+                'cookiefile': config.YT_COOKIES if os.path.exists(config.YT_COOKIES) else None,
+                'proxy': getattr(config, 'YTDLP_PROXY', None),
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=True)

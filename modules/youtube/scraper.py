@@ -29,12 +29,14 @@ def clean_vtt_subtitles(vtt_path: str) -> str:
 
 async def search_ytdlp_flat(query: str, max_results: int) -> list:
     """Performs flat-playlist extraction using yt-dlp to retrieve search results asynchronously."""
+    import config
     loop = asyncio.get_event_loop()
     def extract():
         ydl_opts = {
             'quiet': True,
             'extract_flat': True,
             'skip_download': True,
+            'proxy': getattr(config, 'YTDLP_PROXY', None),
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)

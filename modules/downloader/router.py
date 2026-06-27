@@ -185,9 +185,9 @@ async def dl_callback_handler(callback_query: CallbackQuery, bot: Bot):
     target_list = cache_data["videos"] if action == 'v' else cache_data["audios"]
     target_fmt = next((f for f in target_list if f["format_id"] == format_id), None)
     
-    if target_fmt and target_fmt["bytes"] > (50 * 1024 * 1024):
-        # Enforce Bale's strict 50MB upload limits for format selections
-        await callback_query.answer("❌ This format exceeds Bale's 50MB upload limits. Please select another quality.", show_alert=True)
+    if target_fmt and target_fmt["bytes"] > (shared.RUNTIME_SETTINGS["bale_hard_limit_mb"] * 1024 * 1024):
+        # Enforce Bale's strict upload limit configured by the admin (default 20 MB)
+        await callback_query.answer("❌ This format exceeds Bale's upload limit. Please select another quality.", show_alert=True)
         return
         
     await callback_query.message.edit_text(text="⏳ Request enqueued in Active Job Queue...")
@@ -261,25 +261,27 @@ async def download_direct_file(url: str, cache_id: str, progress_fn) -> str:
     """Download direct file URL stream to secure subfolder."""
     task_dir = f"cache/{cache_id}"
     os.makedirs(task_dir, exist_ok=True)
-    
+
     parsed_url = urllib.parse.urlparse(url)
     file_name = os.path.basename(parsed_url.path) or f"download_{cache_id}"
     file_name = urllib.parse.unquote(file_name)
     out_path = f"{task_dir}/{file_name}"
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, timeout=1800) as response:
+
+    timeout = aiohttp.ClientTimeout(total=1800, connect=15)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        proxy = getattr(config, "AIOHTTP_PROXY", None)
+        async with session.get(url, proxy=proxy) as response:
             if response.status != 200:
                 raise RuntimeError(f"Server returned error {response.status}")
-            
+
             total_size = int(response.headers.get('content-length', 0))
             downloaded = 0
-            
+
             with open(out_path, "wb") as f:
                 async for chunk in response.content.iter_chunked(512 * 1024):
                     f.write(chunk)
                     downloaded += len(chunk)
                     if progress_fn:
                         await progress_fn(downloaded, total_size)
-                        
+
     return out_path

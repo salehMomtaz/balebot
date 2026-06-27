@@ -1,5 +1,19 @@
-# Documentation / IDE artifacts
-apidocument/
+# Logs
+logs/
+*.log
+
+# Bot runtime files
+database.json
+cache/
+*.cookies.txt
+ytcookies.txt
+igcookies.txt
+ttcookies.txt
+xcookies.txt
+cookies.txt
+
+# Local-only launch script (contains WSL-specific proxy settings)
+run_local.sh
 
 # Python bytecode
 __pycache__/
@@ -10,10 +24,5 @@ __pycache__/
 venv/
 .env
 
-# Bot runtime files
-database.json
-*.txt
-cache/
-
-# Logs
-*.log
+# Documentation / IDE artifacts
+apidocument/

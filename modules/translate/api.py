@@ -11,8 +11,11 @@ async def google_translate_async(text: str, src_lang: str, dst_lang: str) -> str
         "dt": "t",
         "q": text
     }
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params, timeout=15) as response:
+    timeout = aiohttp.ClientTimeout(total=15, connect=10)
+    import config
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        proxy = getattr(config, "AIOHTTP_PROXY", None)
+        async with session.get(url, params=params, proxy=proxy) as response:
             if response.status != 200:
                 raise RuntimeError(f"Google Translation API returned HTTP Error: {response.status}")
             result = await response.json()

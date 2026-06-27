@@ -67,11 +67,12 @@ def format_size_short(size_bytes: int) -> str:
 
 def extract_formats(url: str) -> dict:
     cookie_path = get_cookies_for_url(url)
-    
+
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
+        'proxy': getattr(config, 'YTDLP_PROXY', None),
     }
     if cookie_path:
         ydl_opts['cookiefile'] = cookie_path
@@ -179,6 +180,7 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
+        'proxy': getattr(config, 'YTDLP_PROXY', None),
     }
     if cookie_path:
         ydl_opts['cookiefile'] = cookie_path
@@ -239,21 +241,25 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
             'uploader': info.get('uploader', 'Unknown Artist')
         }
 
-def split_file_generator(file_path: str, max_chunk_size_bytes: int):
+def split_file_generator(file_path: str, max_chunk_size_bytes: int, hard_limit_bytes: int | None = None):
     """
     On-Demand sequential splitter:
     Yields paths of split binary parts one-by-one.
     Caps extra disk space to just ONE part (max 2GB or 4GB) instead of duplicating storage.
+    If hard_limit_bytes is provided, chunks are clamped to never exceed it (safety margin).
     """
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
-        
+
+    if hard_limit_bytes is not None and hard_limit_bytes > 0:
+        max_chunk_size_bytes = min(max_chunk_size_bytes, hard_limit_bytes)
+
     file_size = os.path.getsize(file_path)
-    
+
     if file_size <= max_chunk_size_bytes:
         yield file_path
         return
-        
+
     num_chunks = (file_size + max_chunk_size_bytes - 1) // max_chunk_size_bytes
     dir_name = os.path.dirname(file_path)
     basename = os.path.basename(file_path)

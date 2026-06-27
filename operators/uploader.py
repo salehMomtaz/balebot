@@ -57,9 +57,11 @@ async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, 
 
     display_name = filename if filename else os.path.basename(file_path)
     safe_filename = sanitize_filename_for_bale(display_name)
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=1800, connect=15)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         thumb_file = None
         try:
+            proxy = getattr(config, "AIOHTTP_PROXY", None)
             with open(file_path, "rb") as f:
                 form = aiohttp.FormData()
                 form.add_field("chat_id", str(chat_id))
@@ -78,7 +80,7 @@ async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, 
                     thumb_file = open(thumb_path, "rb")
                     form.add_field("thumbnail", thumb_file, filename="thumb.jpg")
 
-                async with session.post(url, data=form, timeout=1800) as response:
+                async with session.post(url, data=form, proxy=proxy) as response:
                     res_json = await response.json()
                     if not res_json.get("ok"):
                         raise RuntimeError(f"Bale API Error: {res_json.get('description', 'Unknown')}")
@@ -154,21 +156,22 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
         max_chunk_size = target_bytes
     else:
         max_chunk_size = rs["binary_chunk_mb"] * 1024 * 1024
+        hard_bytes = rs["bale_hard_limit_mb"] * 1024 * 1024
 
     is_split = file_size > max_chunk_size
-    
+
     force_document = is_document_mode(chat_id) or action == 'd' or (is_split and not is_video)
 
     parts_list = []
-    
+
     try:
         part_num = 1
         loop = asyncio.get_event_loop()
-        
+
         if is_video:
             generator = split_video_by_size_generator(file_path, target_bytes, hard_bytes)
         else:
-            generator = split_file_generator(file_path, max_chunk_size)
+            generator = split_file_generator(file_path, max_chunk_size, hard_bytes)
 
         
         while True:

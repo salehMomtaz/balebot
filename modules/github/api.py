@@ -15,8 +15,11 @@ def get_github_headers() -> dict:
 
 async def fetch_github_api(url: str) -> dict:
     """Helper to perform non-blocking async GET requests to GitHub API."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=get_github_headers(), timeout=15) as response:
+    import config
+    timeout = aiohttp.ClientTimeout(total=45, connect=15)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        proxy = getattr(config, "AIOHTTP_PROXY", None)
+        async with session.get(url, headers=get_github_headers(), proxy=proxy) as response:
             if response.status == 403:
                 raise RuntimeError("GitHub API Rate limit exceeded. Please configure GITHUB_TOKEN.")
             if response.status == 404:
