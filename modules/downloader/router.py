@@ -8,7 +8,7 @@ import aiohttp
 from aiogram import Router, F, Bot
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 import config
-from utils.shared import queue, DOWNLOAD_CACHE
+from utils.shared import queue, DOWNLOAD_CACHE, RUNTIME_SETTINGS
 from main import progress_bar_handler, log_event
 from utils.gate import is_authorized
 from operators.downloader import extract_formats, download_media  # Path points cleanly to operators/
@@ -200,7 +200,7 @@ async def dl_callback_handler(callback_query: CallbackQuery, bot: Bot):
     target_list = cache_data["videos"] if action == 'v' else cache_data["audios"]
     target_fmt = next((f for f in target_list if f["format_id"] == format_id), None)
     
-    if target_fmt and target_fmt["bytes"] > (shared.RUNTIME_SETTINGS["bale_hard_limit_mb"] * 1024 * 1024):
+    if target_fmt and target_fmt["bytes"] > (RUNTIME_SETTINGS["bale_hard_limit_mb"] * 1024 * 1024):
         # Enforce Bale's strict upload limit configured by the admin (default 20 MB)
         await callback_query.answer("❌ This format exceeds Bale's upload limit. Please select another quality.", show_alert=True)
         return

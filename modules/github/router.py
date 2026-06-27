@@ -14,7 +14,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 import config
 from utils.gate import is_authorized
-from utils.shared import queue
+from utils.shared import queue, RUNTIME_SETTINGS
 from operators.uploader import process_split_and_upload, upload_file_direct_to_bale
 from modules.github.api import fetch_github_api, get_github_headers
 from modules.github.keyboards import (
@@ -989,7 +989,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
                 try:
                     await stream_url_to_file(raw_download_url, temp_file_path)
                     file_size = os.path.getsize(temp_file_path)
-                    chunk_limit = shared.RUNTIME_SETTINGS["binary_chunk_mb"] * 1024 * 1024
+                    chunk_limit = RUNTIME_SETTINGS["binary_chunk_mb"] * 1024 * 1024
 
                     if file_size <= chunk_limit:
                         await upload_file_direct_to_bale(
