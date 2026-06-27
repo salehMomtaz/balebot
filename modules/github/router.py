@@ -485,9 +485,9 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
     back_gh_markup = get_back_keyboard(gh_id)
 
     # Helper to answer the callback once, then edit the original message safely
-    async def ack(text: str = None):
+    async def ack(text: str = None, show_alert: bool = False):
         try:
-            await callback_query.answer(text=text)
+            await callback_query.answer(text=text, show_alert=show_alert)
         except Exception:
             pass
 

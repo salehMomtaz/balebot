@@ -8,3 +8,4 @@ aiohttp
 aiofiles
 apscheduler
 requests
+python-dotenv
