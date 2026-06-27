@@ -1,3 +1,19 @@
+# Documentation / IDE artifacts
 apidocument/
+
+# Python bytecode
 __pycache__/
 *.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.env
+
+# Bot runtime files
+database.json
+*.txt
+cache/
+
+# Logs
+*.log
