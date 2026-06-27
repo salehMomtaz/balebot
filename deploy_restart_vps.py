@@ -6,6 +6,7 @@ import time
 import paramiko
 
 HOST = "66.23.198.52"
+PORT = 1605
 USER = "root"
 PASS = "yGknqdlzu2EzQ991udKc"
 REPO_REMOTE = "https://github.com/salehMomtaz/balebot.git"
