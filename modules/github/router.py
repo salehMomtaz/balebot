@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 import glob
+import json
 import shutil
 import asyncio
 import urllib.parse
@@ -30,7 +31,69 @@ github_router = Router()
 
 # Stateful Session Cache mapping short IDs to real parameters
 # Structure: { gh_id: { "owner": "...", "repo": "...", "path": "/", "page": 1, "items_list": [] } }
+GITHUB_CACHE_FILE = "cache/github_cache.json"
+GITHUB_CACHE_TTL_MINUTES = 30
 GITHUB_CACHE = {}
+
+def _load_github_cache() -> dict:
+    """Load persistent GitHub browser sessions from disk."""
+    try:
+        if os.path.exists(GITHUB_CACHE_FILE):
+            with open(GITHUB_CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            now = datetime.utcnow().timestamp()
+            ttl_seconds = GITHUB_CACHE_TTL_MINUTES * 60
+            fresh = {
+                gh_id: meta
+                for gh_id, meta in data.items()
+                if isinstance(meta, dict) and now - meta.get("_ts", 0) < ttl_seconds
+            }
+            return fresh
+    except Exception:
+        pass
+    return {}
+
+def _save_github_cache() -> None:
+    """Persist current GitHub browser sessions to disk."""
+    try:
+        os.makedirs("cache", exist_ok=True)
+        with open(GITHUB_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(GITHUB_CACHE, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _touch_github_cache(gh_id: str) -> None:
+    """Update last-access timestamp for a session."""
+    meta = GITHUB_CACHE.get(gh_id)
+    if isinstance(meta, dict):
+        meta["_ts"] = datetime.utcnow().timestamp()
+
+def _get_repo(gh_id: str) -> dict | None:
+    """Fetch a session from cache, refreshing its TTL."""
+    meta = GITHUB_CACHE.get(gh_id)
+    if not isinstance(meta, dict):
+        return None
+    now = datetime.utcnow().timestamp()
+    if now - meta.get("_ts", 0) > GITHUB_CACHE_TTL_MINUTES * 60:
+        GITHUB_CACHE.pop(gh_id, None)
+        _save_github_cache()
+        return None
+    _touch_github_cache(gh_id)
+    return meta
+
+def _set_repo(gh_id: str, meta: dict) -> None:
+    """Store a session in cache and persist it."""
+    meta["_ts"] = datetime.utcnow().timestamp()
+    GITHUB_CACHE[gh_id] = meta
+    _save_github_cache()
+
+def _delete_repo(gh_id: str) -> None:
+    """Remove a session from cache and persist the change."""
+    GITHUB_CACHE.pop(gh_id, None)
+    _save_github_cache()
+
+# Load any previously saved sessions on import
+GITHUB_CACHE = _load_github_cache()
 
 MAX_GITHUB_ZIP_FILES = int(os.getenv("GITHUB_ZIP_MAX_FILES", "750"))
 MAX_GITHUB_ZIP_BYTES = int(os.getenv("GITHUB_ZIP_MAX_BYTES", str(512 * 1024 * 1024)))
@@ -268,13 +331,13 @@ async def github_repo_link_handler(message: Message):
 
     # Generate unique 8-character ID and save to cache
     gh_id = f"gh_{str(uuid.uuid4())[:8]}"
-    GITHUB_CACHE[gh_id] = {
+    _set_repo(gh_id, {
         "owner": owner,
         "repo": repo,
         "path": "/",
         "page": 1,
         "items_list": []
-    }
+    })
 
     await message.reply(
         text=f"🐙 *GitHub Repository Browser*\n\n"
@@ -469,7 +532,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
     action = parts[2]
     user_id = callback_query.from_user.id
 
-    meta = GITHUB_CACHE.get(gh_id)
+    meta = _get_repo(gh_id)
     if not meta:
         try:
             await callback_query.message.edit_text(
@@ -505,6 +568,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
         except Exception:
             pass
         GITHUB_CACHE.pop(gh_id, None)
+        _save_github_cache()
         return
 
     if action == "back":
@@ -566,6 +630,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             return
         tag_name = tags[tag_index]["name"]
         meta["branch"] = tag_name
+        _save_github_cache()
         await ack("Tag ZIP enqueued.")
         await edit("⏳ Request enqueued in Job Queue...")
         await enqueue_github_zip_job(
@@ -587,6 +652,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             return
         branch_name = branches[branch_index]["name"]
         meta["branch"] = branch_name
+        _save_github_cache()
         await ack("Branch ZIP enqueued.")
         await edit("⏳ Request enqueued in Job Queue...")
         await enqueue_github_zip_job(
@@ -608,6 +674,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             return
         tag_name = releases[release_index]["tag_name"]
         meta["branch"] = tag_name
+        _save_github_cache()
         await ack("Release ZIP enqueued.")
         await edit("⏳ Release ZIP request enqueued in Job Queue...")
         await enqueue_github_zip_job(
@@ -754,6 +821,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             api_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
             data = await fetch_github_api(api_url)
             meta["tags"] = data[:10]
+            _save_github_cache()
             if not data:
                 await edit("ℹ️ No tags found for this repository.", markup=back_gh_markup)
             else:
@@ -772,6 +840,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             api_url = f"https://api.github.com/repos/{owner}/{repo}/branches"
             data = await fetch_github_api(api_url)
             meta["branches"] = data[:10]
+            _save_github_cache()
             await edit(
                 text=f"🌿 *Branches inside: {owner}/{repo}*\nSelect a branch to download its ZIP package:",
                 markup=get_branches_keyboard(gh_id, data)
@@ -790,6 +859,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
                 data = [{"tag_name": tag["name"], "published_at": None, "prerelease": False, "draft": False} for tag in tags[:10]]
             releases = data[:10]
             meta["releases"] = releases
+            _save_github_cache()
             release_lines = []
             for index, release in enumerate(releases, start=1):
                 tag = release.get("tag_name", "unknown")
@@ -879,6 +949,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             api_url = contents_api_url(owner, repo, "/", current_branch(meta))
             data = await fetch_github_api(api_url)
             meta["items_list"] = data
+            _save_github_cache()
             total = len(data)
             start = 1
             end = min(8, total)
@@ -898,6 +969,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
     if action.startswith("file_page"):
         target_page = int(parts[3])
         meta["page"] = target_page
+        _save_github_cache()
         items = meta["items_list"]
         path = meta["path"]
         total = len(items)
@@ -928,6 +1000,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             api_url = contents_api_url(owner, repo, parent_path, current_branch(meta))
             data = await fetch_github_api(api_url)
             meta["items_list"] = data
+            _save_github_cache()
             total = len(data)
             start = 1
             end = min(8, total)
@@ -961,6 +1034,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
                 api_url = contents_api_url(owner, repo, item_path, current_branch(meta))
                 data = await fetch_github_api(api_url)
                 meta["items_list"] = data
+                _save_github_cache()
                 total = len(data)
                 start = 1
                 end = min(8, total)
