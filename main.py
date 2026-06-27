@@ -49,20 +49,23 @@ def setup_system_logger():
             # CRITICAL FIX: Explicitly lower root logger's filtering threshold so INFO logs are not discarded
             root_logger.setLevel(logging.INFO)
             
-            formatter = logging.Formatter('%(message)s')
+            channel_formatter = logging.Formatter('%(message)s')
             handler = BaleChannelHandler(config.BALE_TOKEN, config.LOG_CHANNEL_ID)
-            handler.setFormatter(formatter)
+            handler.setFormatter(channel_formatter)
             handler.setLevel(logging.INFO)  # Capture standard INFO, WARNING, and ERROR logs
 
-            # Also mirror the same logs to a local file for real-time debugging
+            # Also mirror the same logs to a local file for real-time debugging.
+            # The local file keeps timestamps/levels because we read it directly.
             from utils.logger import ensure_local_log_handler
             local_handler = ensure_local_log_handler()
-            local_handler.setFormatter(formatter)
+            local_handler.setFormatter(
+                logging.Formatter('%(asctime)s | %(levelname)-8s | %(name)s | %(message)s')
+            )
             local_handler.setLevel(logging.INFO)
 
             root_logger.addHandler(handler)
             root_logger.addHandler(local_handler)
-            print("[Logger] Standalone Bale Logging Service linked to Root Logger.")
+            logging.info("[Logger] Standalone Bale Logging Service linked to Root Logger.")
         except Exception as e:
             print(f"Warning: Failed to initialize standalone Bale logger: {e}")
 
@@ -193,7 +196,7 @@ async def main_engine():
     dp.include_router(downloader_router)
     dp.include_router(direct_dl_router)
     
-    print("Bale Bot Online.")
+    logging.info("Bale Bot Online.")
     
     # Resolve Log Channel Peer on startup to avoid exceptions
     if config.LOG_CHANNEL_ID != 0:
