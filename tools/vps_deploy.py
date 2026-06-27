@@ -3,6 +3,7 @@
 
 Required env vars: VPS_HOST, VPS_USER, VPS_PASSWORD
 Optional: VPS_PORT (default 22), VPS_BOT_DIR (default /root/balebot)
+Bot credentials (BALE_TOKEN, SYSTEM_CREATOR_ID, LOG_CHANNEL_ID) are read from .env.
 """
 import os
 import sys
@@ -10,17 +11,16 @@ import time
 
 import paramiko
 
-HOST = os.environ.get("VPS_HOST")
+sys.path.insert(0, os.path.dirname(__file__))
+from _env_loader import require_env
+
+HOST = require_env("VPS_HOST")["VPS_HOST"]
 PORT = int(os.environ.get("VPS_PORT", "22"))
-USER = os.environ.get("VPS_USER")
-PASS = os.environ.get("VPS_PASSWORD")
+USER = require_env("VPS_USER")["VPS_USER"]
+PASS = require_env("VPS_PASSWORD")["VPS_PASSWORD"]
 BOT_DIR = os.environ.get("VPS_BOT_DIR", "/root/balebot")
 
-ENV_VARS = {
-    "BALE_TOKEN": "1166452835:4p7R009SGNGt07NtiUAGomCo3tv8X4cWtVc",
-    "SYSTEM_CREATOR_ID": "1058935006",
-    "LOG_CHANNEL_ID": "5035194843",
-}
+BOT_ENV = require_env("BALE_TOKEN", "SYSTEM_CREATOR_ID", "LOG_CHANNEL_ID")
 
 
 def run_command(ssh: paramiko.SSHClient, command: str, timeout: int = 60) -> tuple:
@@ -32,17 +32,12 @@ def run_command(ssh: paramiko.SSHClient, command: str, timeout: int = 60) -> tup
 
 
 def main():
-    if not HOST or not USER or not PASS:
-        print("Set VPS_HOST, VPS_USER, and VPS_PASSWORD environment variables.")
-        sys.exit(1)
-
     print(f"[*] Connecting to {HOST}:{PORT} as {USER}...")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(HOST, port=PORT, username=USER, password=PASS, timeout=20, banner_timeout=20)
     print("[+] SSH connected.")
 
-    # Ensure bot directory exists and is up to date
     print(f"[*] Updating {BOT_DIR}...")
     out, err, status = run_command(
         ssh,
@@ -57,18 +52,16 @@ def main():
         sys.exit(1)
     print("[+] Code updated.")
 
-    # Write .env file on the VPS
     print("[*] Writing environment file...")
     sftp = ssh.open_sftp()
     env_path = f"{BOT_DIR}/.env"
     with sftp.file(env_path, "w") as f:
-        for key, value in ENV_VARS.items():
+        for key, value in BOT_ENV.items():
             f.write(f"{key}={value}\n")
     sftp.close()
     run_command(ssh, f"chmod 600 {env_path}")
     print("[+] Environment file written.")
 
-    # Ensure virtual environment exists and requirements are installed
     print("[*] Checking virtual environment...")
     out, err, status = run_command(ssh, f"cd {BOT_DIR} && test -d venv && echo yes || echo no")
     if out.strip() != "yes":
@@ -95,14 +88,12 @@ def main():
         else:
             print("[+] Requirements up to date.")
 
-    # Stop any existing bot service or process
     print("[*] Stopping existing bot processes...")
     run_command(ssh, "systemctl stop balebot 2>/dev/null || true; pkill -9 -f 'python.*main.py' || true")
     time.sleep(2)
 
-    # Start the bot as a systemd transient service
     print("[*] Starting bot via systemd-run...")
-    env_args = " ".join(f'--setenv={k}={v}' for k, v in ENV_VARS.items())
+    env_args = " ".join(f'--setenv={k}={v}' for k, v in BOT_ENV.items())
     start_cmd = (
         f"systemd-run --unit=balebot --uid=root --working-directory={BOT_DIR} "
         f"{env_args} --service-type=simple "

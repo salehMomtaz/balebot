@@ -5,11 +5,7 @@ logs/
 # Bot runtime files
 database.json
 cache/
-*.cookies.txt
-ytcookies.txt
-igcookies.txt
-ttcookies.txt
-xcookies.txt
+*cookies.txt
 cookies.txt
 
 # Local-only launch script (contains WSL-specific proxy settings)

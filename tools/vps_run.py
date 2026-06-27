@@ -5,10 +5,13 @@ import sys
 
 import paramiko
 
-HOST = os.environ.get("VPS_HOST")
+sys.path.insert(0, os.path.dirname(__file__))
+from _env_loader import require_env
+
+HOST = require_env("VPS_HOST")["VPS_HOST"]
 PORT = int(os.environ.get("VPS_PORT", "22"))
-USER = os.environ.get("VPS_USER")
-PASS = os.environ.get("VPS_PASSWORD")
+USER = require_env("VPS_USER")["VPS_USER"]
+PASS = require_env("VPS_PASSWORD")["VPS_PASSWORD"]
 
 
 def run_command(ssh, command, timeout=30):
