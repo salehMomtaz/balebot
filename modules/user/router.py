@@ -6,13 +6,16 @@ from modules.user.keyboards import get_guide_menu_keyboard, get_help_submenu_key
 
 user_router = Router()
 
+# Helper to detect plain web links so downloader_router can handle them
+def is_link(text: str) -> bool:
+    return text.startswith("http://") or text.startswith("https://")
+
 # We strictly isolate this router from matching the System Creator
 @user_router.message(F.text, F.chat.type == "private", lambda message: message.from_user.id != config.SYSTEM_CREATOR_ID)
 async def user_start_text_handler(message: Message):
     text = message.text.strip()
-    
+
     # Let link downloads propagate downstream to downloader_router
-    from modules.downloader_handler import is_link
     if is_link(text):
         return
 

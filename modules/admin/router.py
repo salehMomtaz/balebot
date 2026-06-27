@@ -1,15 +1,16 @@
 # modules/admin/router.py
 import os
 import shutil
+import logging
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message, ForceReply
 import config
 from utils.gate import (
-    load_database, 
-    add_user, 
-    remove_user, 
-    unblacklist_user, 
-    is_document_mode, 
+    load_database,
+    add_user,
+    remove_user,
+    unblacklist_user,
+    is_document_mode,
     toggle_document_mode
 )
 from utils.id_validator import is_valid_telegram_id
@@ -18,6 +19,7 @@ from modules.admin.cookies import COOKIE_MAP
 import shared
 
 admin_router = Router()
+logger = logging.getLogger(__name__)
 
 USER_STATES = {}
 ACTIVE_PROMPTS = {}

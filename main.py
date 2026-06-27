@@ -4,7 +4,6 @@ import time
 import asyncio
 import shutil
 import logging
-import uvicorn
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -127,7 +126,22 @@ async def auto_clean_cache_directory():
 
 async def main_engine():
     print("Initializing balebot services...")
-    
+
+    # Clear stale bytecode left over from refactors so old module paths never shadow current code
+    for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
+        for d in dirs:
+            if d == "__pycache__":
+                try:
+                    shutil.rmtree(os.path.join(root, d))
+                except Exception:
+                    pass
+        for f in files:
+            if f.endswith(".pyc"):
+                try:
+                    os.remove(os.path.join(root, f))
+                except Exception:
+                    pass
+
     # 1. Start the global system logger to pipe all container logs to your channel
     setup_system_logger()
     
@@ -168,7 +182,7 @@ async def main_engine():
             print(f"Warning: Could not resolve Log Channel ID: {e}")
             
     from utils.updater import auto_update_ytdlp
-    
+
     # CRITICAL RELIABILITY FIX: Clear webhook and drop any backlog updates sent when the bot was down!
     try:
         print("[Polling] Removing webhook and dropping pending backlog...")
@@ -177,32 +191,13 @@ async def main_engine():
     except Exception as e:
         print(f"[Polling] Warning: Failed to drop pending updates: {e}")
 
-    # Concurrently launch the Direct Download API Web Server if present
+    # Run standard long polling and background tasks concurrently
     tasks = [
         dp.start_polling(bot),
         auto_update_ytdlp(),
         auto_clean_cache_directory()
     ]
-    
-    try:
-        from modules.direct_dl.api import app
-        config_uv = uvicorn.Config(
-            app, 
-            host="0.0.0.0", 
-            port=9090, 
-            ssl_certfile=config.SSL_CERT_PATH or None, 
-            ssl_keyfile=config.SSL_KEY_PATH or None
-        )
-        server = uvicorn.Server(config_uv)
-        # Create background task for FastAPI so it runs alongside polling
-        tasks.append(server.serve())
-        print("[API] Direct Download Web Server linked and running on port 9090.")
-    except ImportError:
-        print("[API] Direct Download API (modules/direct_dl/api.py) not loaded/present. Web server skipped.")
-    except Exception as e:
-        print(f"[API] Warning: Failed to initialize Direct Download Web Server: {e}")
 
-    # Run standard long polling and background tasks concurrently
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":

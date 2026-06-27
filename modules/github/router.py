@@ -827,13 +827,16 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             data = await fetch_github_api(api_url)
             meta["items_list"] = data  # Cache the items list in RAM
 
+            total = len(data)
+            start = 1
+            end = min(8, total)
             keyboard = get_files_explorer_keyboard(gh_id, data, "/", 1)
             await callback_query.message.edit_text(
                 text=f"📁 *Repository File Explorer*\n\n"
                      f"📦 *Repository:* `{owner}/{repo}`\n"
                      f"🌿 *Branch:* `{display_branch(meta)}`\n"
                      f"📂 *Active Path:* `/`\n"
-                     f"📄 Page `{1}` | Displaying `{len(data)}` items:",
+                     f"📄 Page `{1}` | Showing `{start}-{end}` of `{total}` items:",
                 reply_markup=keyboard
             )
         except Exception as e:
@@ -866,6 +869,9 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
 
         items = meta["items_list"]
         path = meta["path"]
+        total = len(items)
+        start = (target_page - 1) * 8 + 1
+        end = min(target_page * 8, total)
 
         keyboard = get_files_explorer_keyboard(gh_id, items, path, target_page)
         await callback_query.message.edit_text(
@@ -873,7 +879,7 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
                  f"📦 *Repository:* `{owner}/{repo}`\n"
                  f"🌿 *Branch:* `{display_branch(meta)}`\n"
                  f"📂 *Active Path:* `{path}`\n"
-                 f"📄 Page `{target_page}` | Displaying `{len(items)}` items:",
+                 f"📄 Page `{target_page}` | Showing `{start}-{end}` of `{total}` items:",
             reply_markup=keyboard
         )
         await callback_query.answer()
@@ -895,13 +901,16 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
             data = await fetch_github_api(api_url)
             meta["items_list"] = data
 
+            total = len(data)
+            start = 1
+            end = min(8, total)
             keyboard = get_files_explorer_keyboard(gh_id, data, parent_path, 1)
             await callback_query.message.edit_text(
                 text=f"📁 *Repository File Explorer*\n\n"
                      f"📦 *Repository:* `{owner}/{repo}`\n"
                      f"🌿 *Branch:* `{display_branch(meta)}`\n"
                      f"📂 *Active Path:* `{parent_path}`\n"
-                     f"📄 Page `{1}` | Displaying `{len(data)}` items:",
+                     f"📄 Page `{1}` | Showing `{start}-{end}` of `{total}` items:",
                 reply_markup=keyboard
             )
         except Exception as e:
@@ -926,13 +935,16 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
                 data = await fetch_github_api(api_url)
                 meta["items_list"] = data
 
+                total = len(data)
+                start = 1
+                end = min(8, total)
                 keyboard = get_files_explorer_keyboard(gh_id, data, f"/{item_path}", 1)
                 await callback_query.message.edit_text(
                     text=f"📁 *Repository File Explorer*\n\n"
                          f"📦 *Repository:* `{owner}/{repo}`\n"
                          f"🌿 *Branch:* `{display_branch(meta)}`\n"
                          f"📂 *Active Path:* `/{item_path}`\n"
-                         f"📄 Page `{1}` | Displaying `{len(data)}` items:",
+                         f"📄 Page `{1}` | Showing `{start}-{end}` of `{total}` items:",
                     reply_markup=keyboard
                 )
             except Exception as e:
@@ -945,17 +957,20 @@ async def github_callback_handler(callback_query: CallbackQuery, bot: Bot):
 
             async def queued_file_job():
                 os.makedirs("cache", exist_ok=True)
-                temp_file_path = f"cache/{uuid.uuid4().hex[:8]}_{safe_cache_filename(item_name)}"
+                # Keep the original filename in the multipart upload while keeping the local path unique
+                safe_name = safe_cache_filename(item_name)
+                temp_file_path = f"cache/{gh_id}_{safe_name}"
                 raw_download_url = selected_item["download_url"]
 
                 try:
                     await stream_url_to_file(raw_download_url, temp_file_path)
 
-                    # Send document directly
+                    # Send document directly with the original filename preserved
                     await upload_file_direct_to_bale(
                         method="sendDocument",
                         chat_id=user_id,
                         file_path=temp_file_path,
+                        filename=item_name,
                         caption=f"📄 *File delivered:* `{item_name}`"
                     )
 

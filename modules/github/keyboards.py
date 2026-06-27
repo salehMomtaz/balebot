@@ -55,35 +55,35 @@ def get_files_explorer_keyboard(gh_id: str, items: list, path: str, page: int) -
     """
     keyboard_rows = []
     keyboard_rows.append([InlineKeyboardButton(text="📦 Download Current Folder", callback_data=f"gh:{gh_id}:file_zip")])
-    
+
     # 1. Add Parent Directory navigation button if we are inside a subfolder
     if path != "/":
         keyboard_rows.append([InlineKeyboardButton(text="📁 .. Parent Directory", callback_data=f"gh:{gh_id}:file_up")])
-        
+
     # 2. Paginate items safely (8 per page)
     start_idx = (page - 1) * 8
     end_idx = start_idx + 8
     page_items = items[start_idx:end_idx]
-    
+
     for idx, item in enumerate(page_items):
         name = item["name"]
         item_type = item["type"]
         actual_index = start_idx + idx
-        
-        # Format labels
+
+        # Format labels to match the user's mock
         label = f"📁 {name}" if item_type == "dir" else f"📄 {name} · Download"
         keyboard_rows.append([InlineKeyboardButton(text=label, callback_data=f"gh:{gh_id}:file_nav:{actual_index}")])
-        
+
     # 3. Add Pagination Buttons
     nav_row = []
     if page > 1:
         nav_row.append(InlineKeyboardButton(text="◀️ Prev", callback_data=f"gh:{gh_id}:file_page:{page - 1}"))
     if end_idx < len(items):
         nav_row.append(InlineKeyboardButton(text="Next ▶️", callback_data=f"gh:{gh_id}:file_page:{page + 1}"))
-        
+
     if nav_row:
         keyboard_rows.append(nav_row)
-        
+
     # 4. Add Back button
     keyboard_rows.append([InlineKeyboardButton(text="◀️ Back to Repo Menu", callback_data=f"gh:{gh_id}:back")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)

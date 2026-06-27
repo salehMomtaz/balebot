@@ -41,21 +41,22 @@ def clean_caption_text(text: str, max_len: int = 150) -> str:
         cleaned = cleaned[:max_len].strip() + "..."
     return cleaned
 
-async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, caption: str = "", extra_params: dict = None, thumb_path: str = None) -> dict:
+async def upload_file_direct_to_bale(method: str, chat_id: int, file_path: str, caption: str = "", extra_params: dict = None, thumb_path: str = None, filename: str = None) -> dict:
     """
     Directly uploads a file to Bale's API using standard multipart/form-data POST.
     Bypasses framework-specific serialization limitations completely to guarantee successful delivery.
     """
     url = f"https://tapi.bale.ai/bot{config.BALE_TOKEN}/{method}"
-    
+
     # Map the multipart form field name to the target Bale API method
     field_name = "document"
     if method == "sendVideo":
         field_name = "video"
     elif method == "sendAudio":
         field_name = "audio"
-        
-    safe_filename = sanitize_filename_for_bale(os.path.basename(file_path))
+
+    display_name = filename if filename else os.path.basename(file_path)
+    safe_filename = sanitize_filename_for_bale(display_name)
     async with aiohttp.ClientSession() as session:
         thumb_file = None
         try:
