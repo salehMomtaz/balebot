@@ -149,8 +149,9 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
 
     rs = shared.RUNTIME_SETTINGS
     is_video = action == 'v'
+    is_audio = action == 'a'
 
-    if is_video:
+    if is_video or is_audio:
         target_bytes = rs["split_target_mb"] * 1024 * 1024
         hard_bytes = rs["bale_hard_limit_mb"] * 1024 * 1024
         max_chunk_size = target_bytes
@@ -160,7 +161,7 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
 
     is_split = file_size > max_chunk_size
 
-    force_document = is_document_mode(chat_id) or action == 'd' or (is_split and not is_video)
+    force_document = is_document_mode(chat_id) or action == 'd' or (is_split and not is_video and not is_audio)
 
     parts_list = []
 
@@ -168,7 +169,8 @@ async def process_split_and_upload(bot: Bot, chat_id: int, file_path: str, actio
         part_num = 1
         loop = asyncio.get_event_loop()
 
-        if is_video:
+        if is_video or is_audio:
+            # ffmpeg -c copy segmenting works for both video and audio containers
             generator = split_video_by_size_generator(file_path, target_bytes, hard_bytes)
         else:
             generator = split_file_generator(file_path, max_chunk_size, hard_bytes)

@@ -189,11 +189,13 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
         ydl_opts['format'] = f"{format_id}+bestaudio/best"
         ydl_opts['merge_output_format'] = 'mp4'
     else:
+        # Audio: download the selected audio format as-is; avoid re-encoding to 320kbps
+        # which inflates file size. Splitting will be done by ffmpeg -c copy.
         ydl_opts['format'] = format_id
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '320',
+            'preferredcodec': 'm4a',
+            'preferredquality': '0',
         }]
 
     ydl_opts['writethumbnail'] = True
@@ -212,7 +214,13 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
         
         if format_type == 'a':
             base, _ = os.path.splitext(filename)
-            filename = f"{base}.mp3"
+            # yt-dlp may produce .m4a, .mp3, or .webm depending on source and postprocessors
+            for ext in ['.m4a', '.mp3', '.webm', '.ogg', '.opus']:
+                if os.path.exists(f"{base}{ext}"):
+                    filename = f"{base}{ext}"
+                    break
+            else:
+                filename = f"{base}.m4a"
         elif format_type == 'v':
             base, _ = os.path.splitext(filename)
             if not os.path.exists(filename):
