@@ -26,6 +26,17 @@ def is_social_media_link(url: str) -> bool:
     social_domains = ["youtube.com", "youtu.be", "instagram.com", "tiktok.com", "twitter.com", "x.com"]
     return any(domain in url_lower for domain in social_domains)
 
+
+def is_github_link(url: str) -> bool:
+    """Check if the target link is a GitHub repository/issue/gist URL.
+
+    GitHub URLs are handled by the dedicated github_router. This guard prevents
+    the generic downloader from treating them as media links when multiple bot
+    instances or routing edge cases occur.
+    """
+    url_lower = url.lower()
+    return ("github.com" in url_lower or "gist.github.com" in url_lower)
+
 # =========================================================================
 # Group 1 Handlers: Link Downloader (Mutual-exclusive filters in aiogram v3)
 # =========================================================================
@@ -43,6 +54,10 @@ async def text_link_handler(message: Message):
     custom_filename = parts[1].strip() if len(parts) > 1 else None
     
     if not is_authorized(user_id):
+        return
+
+    # GitHub URLs are handled by the dedicated GitHub router; ignore them here.
+    if is_github_link(url):
         return
 
     if is_social_media_link(url):
