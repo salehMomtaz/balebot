@@ -103,28 +103,32 @@ async def progress_bar_handler(current, total, message, status_title: str):
         pass
 
 def initialize_cookie_jars():
-    """Initializes empty cookie files with the Netscape header to prevent yt-dlp warnings and enable auto-writing."""
+    """
+    Ensure cookie files exist with a Netscape header.
+    If a jar already has content, prepend the header when it is missing.
+    Never overwrite existing cookies.
+    """
+    header = "# Netscape HTTP Cookie File\n"
     cookie_files = [config.YT_COOKIES, config.IG_COOKIES, config.TT_COOKIES, config.X_COOKIES, config.COOKIES_FILE]
     for file_path in cookie_files:
-        needs_init = False
         if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-            needs_init = True
-        else:
             try:
-                with open(file_path, "r") as f:
-                    header = f.read(15)  # Read first 15 bytes to strictly verify header syntax
-                if "# Netscape" not in header:
-                    needs_init = True
-            except Exception:
-                needs_init = True
-                
-        if needs_init:
-            try:
-                with open(file_path, "w") as f:
-                    f.write("# Netscape HTTP Cookie File\n")
-                print(f"[Cookies] Cookie jar initialized with Netscape header: {file_path}")
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(header)
+                print(f"[Cookies] Initialized empty cookie jar: {file_path}")
             except Exception as e:
                 print(f"[Cookies] Warning: Could not initialize cookie jar {file_path}: {e}")
+            continue
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            if not content.strip().startswith("# Netscape"):
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(header + content)
+                print(f"[Cookies] Added missing Netscape header to: {file_path}")
+        except Exception as e:
+            print(f"[Cookies] Warning: Could not check cookie jar {file_path}: {e}")
 
 async def auto_clean_cache_directory():
     """Periodically sweeps the cache directory to purge orphaned files older than the configured age."""
