@@ -13,7 +13,14 @@ RUNTIME_SETTINGS = {
     "bale_hard_limit_mb": 20,   # Bale's real cap. Never upload at/above this.
     "split_target_mb": 18,      # Target size per video segment (margin under 20).
     "binary_chunk_mb": 18,      # Target size per binary (document/audio) chunk.
+    "max_cache_age_hours": 2,   # Auto-clean files older than this in cache/.
+    "max_disk_usage_pct": 95,   # Refuse downloads if disk usage exceeds this.
 }
+
+
+# --- Safety limits (not admin-adjustable at runtime) ---
+MAX_QUEUE_DEPTH = 20            # Reject new jobs if queue grows beyond this
+MIN_FREE_DISK_GB = 1            # Minimum free space headroom in GB
 
 
 def get_setting_bytes(key: str) -> int:
@@ -21,8 +28,12 @@ def get_setting_bytes(key: str) -> int:
     return int(RUNTIME_SETTINGS[key]) * 1024 * 1024
 
 
-def set_setting_mb(key: str, value_mb: int) -> None:
-    """Admin-console helper: update a size setting at runtime (value in MB)."""
+def set_setting(key: str, value: int) -> None:
+    """Admin-console helper: update a runtime setting (value as integer)."""
     if key not in RUNTIME_SETTINGS:
         raise KeyError(f"Unknown setting: {key}")
-    RUNTIME_SETTINGS[key] = int(value_mb)
+    RUNTIME_SETTINGS[key] = int(value)
+
+
+# Backwards-compatible alias
+set_setting_mb = set_setting

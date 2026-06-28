@@ -2,6 +2,7 @@
 import os
 import shutil
 import logging
+import io
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message, ForceReply
 import config
@@ -86,24 +87,13 @@ async def admin_state_message_handler(message: Message, bot: Bot):
     # A. Handle Cookie Replacement State
     if state.startswith("waiting_for_replace_"):
         USER_STATES.pop(user_id, None)
-        cookie_key = state.split("waiting_for_replace_")[1]
-        file_path = COOKIE_MAP.get(cookie_key)
-        if not file_path:
-            await bot.send_message(chat_id=user_id, text="❌ *Error:* Invalid cookie profile selected.", reply_markup=back_markup)
-            return
-            
-        # Prepend Netscape headers automatically if missing
-        final_content = input_text
-        if not input_text.startswith("# Netscape"):
-            final_content = f"# Netscape HTTP Cookie File\n{input_text}"
-            
-        try:
-            with open(file_path, "w") as f:
-                f.write(final_content)
-            await bot.send_message(chat_id=user_id, text=f"✅ `{cookie_key}.txt` successfully replaced!", reply_markup=back_markup)
-            await log_event(f"🍪 *Admin Action:* Cookie profile `{cookie_key}.txt` was replaced.")
-        except Exception as e:
-            await bot.send_message(chat_id=user_id, text=f"❌ *Failed to write cookie file:* {e}", reply_markup=back_markup)
+        # Text messages are not accepted; we require a document file because Bale
+        # fragments long text into multiple messages, corrupting Netscape cookie jars.
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ *Please send the cookie jar as a `.txt` document file, not as text.*",
+            reply_markup=back_markup
+        )
         return
     if state == "waiting_for_setlimit":
         USER_STATES.pop(user_id, None)
@@ -113,7 +103,7 @@ async def admin_state_message_handler(message: Message, bot: Bot):
             return
 
         key, raw_value = parts[0], parts[1]
-        valid_keys = {"bale_hard_limit_mb", "split_target_mb", "binary_chunk_mb"}
+        valid_keys = {"bale_hard_limit_mb", "split_target_mb", "binary_chunk_mb", "max_cache_age_hours"}
         if key not in valid_keys:
             await message.reply(f"Unknown key. Allowed: {', '.join(sorted(valid_keys))}")
             return
@@ -123,11 +113,11 @@ async def admin_state_message_handler(message: Message, bot: Bot):
             if value <= 0:
                 raise ValueError
         except ValueError:
-            await message.reply("Value must be a positive integer (MB).")
+            await message.reply("Value must be a positive integer.")
             return
 
         shared.set_setting_mb(key, value)
-        await message.reply(f"Updated {key} = {value} MB")
+        await message.reply(f"Updated {key} = {value}")
         logger.info(f"Admin {user_id} set runtime {key}={value}")
         return
 
@@ -168,6 +158,71 @@ async def admin_state_message_handler(message: Message, bot: Bot):
         if unblacklist_user(target_id):
             await bot.send_message(chat_id=user_id, text=f"✅ User `{target_id}` has been unbanned.", reply_markup=back_markup)
             await log_event(f"🔓 *User Unbanned:* Creator unbanned User ID `{target_id}`.")
+
+# =========================================================================
+# 2b. Cookie Jar Replacement via Document File
+# =========================================================================
+@admin_router.message(
+    F.document,
+    F.chat.type == "private",
+    lambda message: message.from_user.id == config.SYSTEM_CREATOR_ID,
+    lambda message: USER_STATES.get(message.from_user.id, "").startswith("waiting_for_replace_")
+)
+async def admin_cookie_replace_document_handler(message: Message, bot: Bot):
+    from main import log_event
+    user_id = message.from_user.id
+    state = USER_STATES.pop(user_id, None)
+    cookie_key = state.split("waiting_for_replace_")[1]
+    file_path = COOKIE_MAP.get(cookie_key)
+
+    prompt_id = ACTIVE_PROMPTS.pop(user_id, None)
+    if prompt_id:
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=prompt_id)
+        except Exception:
+            pass
+
+    try:
+        await bot.delete_message(chat_id=user_id, message_id=message.message_id)
+    except Exception:
+        pass
+
+    if not file_path:
+        await bot.send_message(chat_id=user_id, text="❌ *Error:* Invalid cookie profile selected.", reply_markup=back_markup)
+        return
+
+    doc = message.document
+    file_name = (doc.file_name or "").lower()
+    mime = (doc.mime_type or "").lower()
+    if not (file_name.endswith(".txt") or mime.startswith("text/")):
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ *Invalid file type.* Please send a `.txt` cookie jar file.",
+            reply_markup=back_markup
+        )
+        return
+
+    try:
+        buffer = io.BytesIO()
+        await bot.download(file=message.document.file_id, destination=buffer)
+        buffer.seek(0)
+        content = buffer.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        await bot.send_message(chat_id=user_id, text=f"❌ *Failed to download file:* {e}", reply_markup=back_markup)
+        return
+
+    # Normalize Netscape header if missing
+    stripped = content.strip()
+    if not stripped.startswith("# Netscape"):
+        content = f"# Netscape HTTP Cookie File\n{content}"
+
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        await bot.send_message(chat_id=user_id, text=f"✅ `{cookie_key}.txt` successfully replaced from document!", reply_markup=back_markup)
+        await log_event(f"🍪 *Admin Action:* Cookie profile `{cookie_key}.txt` was replaced via document.")
+    except Exception as e:
+        await bot.send_message(chat_id=user_id, text=f"❌ *Failed to write cookie file:* {e}", reply_markup=back_markup)
 
 # =========================================================================
 # 3. Callback Query Handlers (Processes Main Console Menu Buttons)
@@ -313,8 +368,12 @@ async def callback_admin_cookie_action(callback_query: CallbackQuery, bot: Bot):
         USER_STATES[user_id] = f"waiting_for_replace_{cookie_key}"
         ACTIVE_PROMPTS[user_id] = callback_query.message.message_id
         await callback_query.message.edit_text(
-            text=f"📝 *Replace Cookies for {cookie_key}.txt*\n"
-                 f"Please paste the cookie contents (Netscape format) below, or press the button to cancel:",
+            text=(
+                f"📝 *Replace Cookies for `{cookie_key}.txt`*\n\n"
+                "Bale splits long text into multiple messages, which corrupts cookie jars.\n"
+                "Please send the cookie jar as a *document file* (`.txt`). "
+                "The filename does not matter — only the contents are used."
+            ),
             reply_markup=back_markup
         )
         await callback_query.answer()

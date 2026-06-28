@@ -1,4 +1,6 @@
 # utils/queue_manager.py
+import os
+import shutil
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -24,12 +26,37 @@ class DownloadQueue:
         self._lock = asyncio.Lock()       # ONLY guards the in-memory list operations
         self._active = False              # Indicates if a task is currently executing
 
-    async def add_task(self, user_id: int, message, coroutine) -> str:
+    def _disk_ok(self) -> bool:
+        """Return False if disk usage is above the safe threshold."""
+        try:
+            from utils.shared import RUNTIME_SETTINGS
+            usage = shutil.disk_usage(os.getcwd())
+            pct = (usage.used / usage.total) * 100
+            return pct <= RUNTIME_SETTINGS.get("max_disk_usage_pct", 95)
+        except Exception:
+            return True
+
+    async def add_task(self, user_id: int, message, coroutine) -> str | None:
         """Enqueue a task and run it immediately if the engine is idle."""
+        from utils.shared import MAX_QUEUE_DEPTH
+
+        if not self._disk_ok():
+            await self._safe_edit(
+                message,
+                "❌ Disk is too full. Clean up space before starting new downloads."
+            )
+            return None
+
         task = QueueTask(user_id=user_id, message=message, coroutine=coroutine)
-        
+
         # Acquire the lock for a fraction of a millisecond to update the list
         async with self._lock:
+            if len(self._pending) >= MAX_QUEUE_DEPTH:
+                await self._safe_edit(
+                    message,
+                    f"❌ Queue is full ({MAX_QUEUE_DEPTH} jobs). Wait for active jobs to finish."
+                )
+                return None
             self._pending.append(task)
             position = len(self._pending)
             start_worker = not self._active

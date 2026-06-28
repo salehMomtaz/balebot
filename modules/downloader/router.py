@@ -80,8 +80,18 @@ async def text_link_handler(message: Message):
                 
                 videos = data["videos"]
                 audios = data["audios"]
+
+                if not videos and not audios:
+                    await status_msg.edit_text(
+                        text="⚠️ *No downloadable formats found.*\n"
+                             "This usually means the link is a live stream that has ended, "
+                             "is region-blocked, or only has preview/storyboard formats available."
+                    )
+                    await log_event(f"⚠️ *No formats:* `{url}` returned no downloadable video or audio formats.")
+                    return
+
                 max_rows = max(len(videos), len(audios))
-                
+
                 keyboard_rows = []
                 for i in range(max_rows):
                     row = []
@@ -115,8 +125,12 @@ async def text_link_handler(message: Message):
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
                 )
             except Exception as e:
-                await status_msg.edit_text(text=f"❌ Extraction failed.\nError: `{str(e)}`")
-                await log_event(f"❌ *Extraction Error:* Failed to parse `{url}`. Details: `{str(e)}`")
+                error_text = str(e)
+                user_message = error_text
+                if "Extraction failed:" in error_text:
+                    user_message = error_text.replace("Extraction failed:", "").strip()
+                await status_msg.edit_text(text=f"❌ Extraction failed.\n*{user_message}*")
+                await log_event(f"❌ *Extraction Error:* Failed to parse `{url}`. Details: `{error_text}`")
 
         await queue.add_task(user_id, status_msg, download_job)
     else:
@@ -259,8 +273,12 @@ async def dl_callback_handler(callback_query: CallbackQuery, bot: Bot):
             await log_event(f"✅ *Job Successful:* `{clean_name}` was successfully processed and sent.")
             
         except Exception as e:
-            await callback_query.message.edit_text(text=f"❌ Download/Upload failure.\nError: `{str(e)}`")
-            await log_event(f"❌ *Job Failure:* Extraction/Upload crashed on `{cache_data['url']}`. Details: `{str(e)}`")
+            error_text = str(e)
+            user_message = error_text
+            if "Extraction failed:" in error_text:
+                user_message = error_text.replace("Extraction failed:", "").strip()
+            await callback_query.message.edit_text(text=f"❌ Download/Upload failure.\n*{user_message}*")
+            await log_event(f"❌ *Job Failure:* Extraction/Upload crashed on `{cache_data['url']}`. Details: `{error_text}`")
         finally:
             if os.path.exists(task_dir):
                 try:

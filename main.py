@@ -69,6 +69,7 @@ def setup_system_logger():
             root_logger.addHandler(handler)
             root_logger.addHandler(local_handler)
             logging.info("[Logger] Standalone Bale Logging Service linked to Root Logger.")
+            logging.info(f"[Logger] Local log mirror active at: {os.path.abspath('logs/bot.log')}")
         except Exception as e:
             print(f"Warning: Failed to initialize standalone Bale logger: {e}")
 
@@ -126,13 +127,15 @@ def initialize_cookie_jars():
                 print(f"[Cookies] Warning: Could not initialize cookie jar {file_path}: {e}")
 
 async def auto_clean_cache_directory():
-    """Periodically sweeps the cache directory every hour to purge orphaned files older than 2 hours."""
+    """Periodically sweeps the cache directory to purge orphaned files older than the configured age."""
+    from utils.shared import RUNTIME_SETTINGS
     while True:
         print("[Cleaner] Running periodic cache sweep...")
         cache_dir = "cache"
         if os.path.exists(cache_dir):
             now = time.time()
-            threshold = now - 7200  # 2 hours = 7200 seconds
+            max_age_hours = RUNTIME_SETTINGS.get("max_cache_age_hours", 2)
+            threshold = now - (max_age_hours * 3600)
             try:
                 for entry in os.scandir(cache_dir):
                     mtime = entry.stat().st_mtime
@@ -145,7 +148,7 @@ async def auto_clean_cache_directory():
                             print(f"[Cleaner] Purged orphaned file: {entry.path}")
             except Exception as e:
                 print(f"[Cleaner] Exception occurred during cache sweep: {e}")
-                
+
         await asyncio.sleep(3600)  # Wait 1 hour
 
 # =========================================================================
@@ -155,28 +158,26 @@ async def auto_clean_cache_directory():
 async def main_engine():
     print("Initializing balebot services...")
 
-    # Clear stale bytecode left over from refactors so old module paths never shadow current code
-    for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
-        for d in dirs:
-            if d == "__pycache__":
-                try:
-                    shutil.rmtree(os.path.join(root, d))
-                except Exception:
-                    pass
-        for f in files:
-            if f.endswith(".pyc"):
-                try:
-                    os.remove(os.path.join(root, f))
-                except Exception:
-                    pass
-
     # 1. Start the global system logger to pipe all container logs to your channel
     setup_system_logger()
-    
+
     # 2. Initialize and format cookie files
     initialize_cookie_jars()
-    
-    # 3. Import and register modular routing and security middlewares
+
+    # 3. Disk-space sanity check: refuse to run if the filesystem is critically full
+    try:
+        import shutil
+        usage = shutil.disk_usage(os.getcwd())
+        free_gb = usage.free / (1024 ** 3)
+        used_pct = (usage.used / usage.total) * 100
+        logging.info(f"[System] Disk usage: {used_pct:.1f}% used, {free_gb:.2f} GB free.")
+        if used_pct > 95:
+            logging.error("[System] Disk is critically full. Refusing to start to protect SSH/system access.")
+            return
+    except Exception as e:
+        logging.warning(f"[System] Could not check disk usage: {e}")
+
+    # 4. Import and register modular routing and security middlewares
     from modules.admin.router import admin_router
     from modules.admin.middleware import SecurityGateMiddleware
     from modules.user.router import user_router

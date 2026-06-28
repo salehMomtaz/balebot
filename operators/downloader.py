@@ -1,6 +1,8 @@
 # operators/downloader.py
 import os
+import shutil
 import subprocess
+import tempfile
 import yt_dlp
 import ffmpeg
 import config
@@ -65,35 +67,155 @@ def format_size_short(size_bytes: int) -> str:
         return f"{round(size_mb / 1024, 1)}G"
     return f"{int(size_mb)}M"
 
+
+def _disk_usage_percent(path: str) -> float:
+    """Return disk usage percentage for the filesystem containing *path*."""
+    try:
+        usage = shutil.disk_usage(path)
+        return (usage.used / usage.total) * 100
+    except Exception:
+        return 0.0
+
+
+def _ensure_disk_space(path: str, needed_bytes: int = 0) -> None:
+    """Raise RuntimeError if disk is critically full or cannot accommodate *needed_bytes*."""
+    try:
+        usage = shutil.disk_usage(path)
+    except Exception as exc:
+        raise RuntimeError(f"Cannot check disk space: {exc}")
+
+    free_bytes = usage.free
+    # Always require at least 500 MB headroom for temp/work files
+    required_free = needed_bytes + (500 * 1024 * 1024)
+    if free_bytes < required_free:
+        free_gb = free_bytes / (1024 * 1024 * 1024)
+        needed_gb = needed_bytes / (1024 * 1024 * 1024)
+        raise RuntimeError(
+            f"Insufficient disk space (free {free_gb:.2f} GB). "
+            f"At least {needed_gb + 0.5:.2f} GB free is required for this operation."
+        )
+
+    usage_pct = (usage.used / usage.total) * 100
+    if usage_pct > 95:
+        raise RuntimeError(
+            f"Disk is critically full ({usage_pct:.1f}% used). "
+            "Clean up space before running downloads to avoid locking the server."
+        )
+
+
+def _is_sign_in_error(error_text: str) -> bool:
+    """Detect YouTube/Google bot/sign-in challenges from yt-dlp error text."""
+    text = error_text.lower()
+    markers = [
+        "sign in to confirm",
+        "confirm you’re not a bot",
+        "confirm you're not a bot",
+        "sign in to continue",
+        "please sign in",
+        "authentication required",
+        "cookies-from-browser",
+        "use --cookies",
+    ]
+    return any(m in text for m in markers)
+
+
+def _classify_ytdl_error(exc: Exception, url: str) -> str:
+    """Return a human-readable explanation for common yt-dlp failures."""
+    text = str(exc).lower()
+
+    if _is_sign_in_error(text):
+        return (
+            "YouTube/Google is requiring sign-in from this server. "
+            "Please send a fresh `ytcookies.txt` jar via Admin Console → Cookies."
+        )
+
+    if "no video formats found" in text or "requested format" in text:
+        return (
+            "The video has no playable formats available. "
+            "This usually happens for ended live streams, members-only videos, or region-blocked content."
+        )
+
+    if "unable to extract" in text or "failed to parse" in text:
+        return "The site changed its layout or the URL is malformed."
+
+    if "timed out" in text or "timeout" in text:
+        return "The download timed out. The server may be slow or the file very large."
+
+    if "network" in text or "connection" in text or "unreachable" in text:
+        return "A network error occurred while contacting the video host."
+
+    return str(exc)
+
+
+def _is_live_or_storyboard_only(info: dict) -> bool:
+    """Return True if the only formats are storyboards/previews (ended live stream)."""
+    formats = info.get("formats", [])
+    if not formats:
+        return True
+    non_storyboard = [
+        f for f in formats
+        if f.get("format_note") != "storyboard" and f.get("ext") != "mhtml"
+    ]
+    return len(non_storyboard) == 0
+
+
 def extract_formats(url: str) -> dict:
+    _ensure_disk_space(os.getcwd())
     cookie_path = get_cookies_for_url(url)
 
-    ydl_opts = {
+    base_opts = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
+        'format': 'all',
         'proxy': getattr(config, 'YTDLP_PROXY', None),
     }
-    if cookie_path:
-        ydl_opts['cookiefile'] = cookie_path
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    info = None
+    last_error = None
+
+    # Strategy 1: use cookies if available
+    if cookie_path:
+        ydl_opts = {**base_opts, 'cookiefile': cookie_path}
         try:
-            info = ydl.extract_info(url, download=False)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
         except Exception as e:
-            raise RuntimeError(f"Extraction failed: {str(e)}")
+            last_error = e
+
+    # Strategy 2: retry without cookies (stale/bot-flagged jars can poison extraction)
+    if info is None:
+        ydl_opts = dict(base_opts)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception as e:
+            last_error = e
+
+    if info is None:
+        raise RuntimeError(f"Extraction failed: {_classify_ytdl_error(last_error, url)}")
 
     duration_seconds = info.get('duration', 0)
     formats = info.get('formats', [])
+
+    if _is_live_or_storyboard_only(info):
+        raise RuntimeError(
+            "This stream has ended or only preview/storyboard formats are available. "
+            "There is nothing downloadable."
+        )
+
     video_options = []
     audio_options = []
 
     for fmt in formats:
+        # Skip storyboards / preview images entirely
+        if fmt.get('format_note') == 'storyboard' or fmt.get('ext') == 'mhtml':
+            continue
+
         size = estimate_format_size(fmt, duration_seconds)
         size_str = format_size_short(size)
-        
+
         if fmt.get('vcodec') == 'none' and fmt.get('acodec') != 'none':
-            ext = fmt.get('ext', 'm4a')
             abr = fmt.get('abr') or 0
             audio_options.append({
                 'format_id': fmt['format_id'],
@@ -102,7 +224,7 @@ def extract_formats(url: str) -> dict:
                 'bytes': size,
                 'bitrate': abr
             })
-            
+
         elif fmt.get('vcodec') != 'none':
             resolution = fmt.get('height')
             if resolution:
@@ -124,7 +246,7 @@ def extract_formats(url: str) -> dict:
         if v['height'] not in seen_heights:
             unique_videos.append(v)
             seen_heights.add(v['height'])
-            
+
     unique_audios = []
     seen_bitrates = set()
     for a in audio_options:
@@ -139,6 +261,73 @@ def extract_formats(url: str) -> dict:
         'videos': unique_videos[:5],
         'audios': unique_audios[:5]
     }
+
+
+def embed_metadata_ffmpeg(file_path: str, title: str, artist: str, thumb_path: str | None, media_type: str) -> str:
+    """
+    Embed metadata (and cover art for audio) into *file_path* using ffmpeg.
+    Returns the path of the file with embedded metadata (may be the same path).
+    """
+    if not os.path.isfile(file_path):
+        return file_path
+
+    ext = os.path.splitext(file_path)[1].lower()
+    # Containers that reliably support metadata
+    supported_audio = {'.m4a', '.mp3', '.mp4', '.ogg', '.opus', '.flac', '.wav'}
+    supported_video = {'.mp4', '.mkv', '.mov', '.avi', '.webm'}
+
+    if media_type == 'a' and ext not in supported_audio:
+        return file_path
+    if media_type == 'v' and ext not in supported_video:
+        return file_path
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=ext, prefix="meta_", dir=os.path.dirname(file_path))
+    os.close(tmp_fd)
+
+    cmd = [
+        'ffmpeg', '-y',
+        '-i', file_path,
+        '-metadata', f'title={title}',
+        '-metadata', f'artist={artist}',
+        '-metadata', f'comment=Downloaded via Balebot',
+    ]
+
+    if media_type == 'a' and thumb_path and os.path.isfile(thumb_path):
+        # For M4A/MP4/ALAC embed cover art via video stream; for MP3 use attached picture
+        if ext in {'.m4a', '.mp4', '.f4a', '.f4b'}:
+            cmd += [
+                '-i', thumb_path,
+                '-map', '0:a', '-map', '1:v',
+                '-c:a', 'copy', '-c:v', 'copy',
+                '-disposition:v:0', 'attached_pic',
+            ]
+        elif ext == '.mp3':
+            cmd += [
+                '-i', thumb_path,
+                '-map', '0:a', '-map', '1:v',
+                '-c:a', 'copy', '-c:v', 'copy',
+                '-id3v2_version', '3',
+                '-metadata:s:v', 'comment=Cover (front)',
+            ]
+        else:
+            cmd += ['-c', 'copy']
+    else:
+        cmd += ['-c', 'copy']
+
+    cmd.append(tmp_path)
+
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        if os.path.getsize(tmp_path) > 0:
+            os.replace(tmp_path, file_path)
+        else:
+            os.remove(tmp_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    return file_path
+
 
 def convert_thumbnail_to_jpeg(input_path: str, cache_id: str) -> str:
     """Uses FFmpeg to crop and pad the thumbnail into a standard 320x320 black-padded square JPEG inside the task folder."""
@@ -174,17 +363,23 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
     os.makedirs(task_dir, exist_ok=True)
     out_tmpl = f"{task_dir}/%(title)s.%(ext)s"
     cookie_path = get_cookies_for_url(url)
-    
+
+    # Conservative disk check: reserve 1 GB + estimated size. The estimate is rough;
+    # we verify again before metadata embedding.
+    _ensure_disk_space(task_dir, 1024 * 1024 * 1024)
+
     ydl_opts = {
         'outtmpl': out_tmpl,
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
+        'overwrites': True,
+        'keep_fragments': False,
         'proxy': getattr(config, 'YTDLP_PROXY', None),
     }
     if cookie_path:
         ydl_opts['cookiefile'] = cookie_path
-        
+
     if format_type == 'v':
         ydl_opts['format'] = f"{format_id}+bestaudio/best"
         ydl_opts['merge_output_format'] = 'mp4'
@@ -199,7 +394,7 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
         }]
 
     ydl_opts['writethumbnail'] = True
-    
+
     if progress_fn:
         def ytdl_hook(d):
             if d['status'] == 'downloading':
@@ -207,47 +402,76 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
                 total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
                 progress_fn(downloaded, total)
         ydl_opts['progress_hooks'] = [ytdl_hook]
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        
-        if format_type == 'a':
-            base, _ = os.path.splitext(filename)
-            # yt-dlp may produce .m4a, .mp3, or .webm depending on source and postprocessors
-            for ext in ['.m4a', '.mp3', '.webm', '.ogg', '.opus']:
-                if os.path.exists(f"{base}{ext}"):
-                    filename = f"{base}{ext}"
-                    break
-            else:
-                filename = f"{base}.m4a"
-        elif format_type == 'v':
-            base, _ = os.path.splitext(filename)
-            if not os.path.exists(filename):
-                if os.path.exists(f"{base}.mp4"):
-                    filename = f"{base}.mp4"
-                elif os.path.exists(f"{base}.mkv"):
-                    filename = f"{base}.mkv"
 
-        base_path, _ = os.path.splitext(filename)
-        thumb_path = None
-        for ext in ['.jpg', '.jpeg', '.png', '.webp']:
-            test_path = f"{base_path}{ext}"
-            if os.path.exists(test_path):
-                thumb_path = test_path
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "requested format" in error_msg and "not available" in error_msg:
+            # Fallback to generic best-effort selectors. The original format_id may
+            # have been removed or merged away between extraction and download.
+            fallback_format = "bestaudio/best" if format_type == 'a' else "bestvideo+bestaudio/best"
+            ydl_opts['format'] = fallback_format
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+        else:
+            raise RuntimeError(_classify_ytdl_error(e, url))
+
+    # Determine the expected filename from the options used for the successful download.
+    filename = yt_dlp.YoutubeDL(ydl_opts).prepare_filename(info)
+
+    if format_type == 'a':
+        base, _ = os.path.splitext(filename)
+        # yt-dlp may produce .m4a, .mp3, or .webm depending on source and postprocessors
+        for ext in ['.m4a', '.mp3', '.webm', '.ogg', '.opus']:
+            if os.path.exists(f"{base}{ext}"):
+                filename = f"{base}{ext}"
                 break
-            
-        clean_thumb = None
-        if thumb_path:
-            clean_thumb = convert_thumbnail_to_jpeg(thumb_path, cache_id)
+        else:
+            filename = f"{base}.m4a"
+    elif format_type == 'v':
+        base, _ = os.path.splitext(filename)
+        if not os.path.exists(filename):
+            if os.path.exists(f"{base}.mp4"):
+                filename = f"{base}.mp4"
+            elif os.path.exists(f"{base}.mkv"):
+                filename = f"{base}.mkv"
 
-        return {
-            'file_path': filename,
-            'thumb_path': clean_thumb,
-            'title': info.get('title', 'Unknown Title'),
-            'duration': info.get('duration', 0),
-            'uploader': info.get('uploader', 'Unknown Artist')
-        }
+    base_path, _ = os.path.splitext(filename)
+    thumb_path = None
+    for ext in ['.jpg', '.jpeg', '.png', '.webp']:
+        test_path = f"{base_path}{ext}"
+        if os.path.exists(test_path):
+            thumb_path = test_path
+            break
+
+    clean_thumb = None
+    if thumb_path:
+        clean_thumb = convert_thumbnail_to_jpeg(thumb_path, cache_id)
+
+    title = info.get('title', 'Unknown Title')
+    uploader = info.get('uploader', 'Unknown Artist')
+
+    # Embed metadata into the file itself using ffmpeg (no re-encode)
+    _ensure_disk_space(task_dir, os.path.getsize(filename) if os.path.exists(filename) else 0)
+    filename = embed_metadata_ffmpeg(filename, title, uploader, clean_thumb, format_type)
+
+    # yt-dlp may leave fragment/part files on interruption; purge them after a successful download
+    for leftover in os.listdir(task_dir):
+        if leftover.endswith(('.part', '.part-Frag0', '.ytdl', '.tmp')):
+            try:
+                os.remove(os.path.join(task_dir, leftover))
+            except Exception:
+                pass
+
+    return {
+        'file_path': filename,
+        'thumb_path': clean_thumb,
+        'title': title,
+        'duration': info.get('duration', 0),
+        'uploader': uploader
+    }
 
 def split_file_generator(file_path: str, max_chunk_size_bytes: int, hard_limit_bytes: int | None = None):
     """

@@ -1,6 +1,7 @@
 # Logs
 logs/
 *.log
+bot.out
 
 # Bot runtime files
 database.json
