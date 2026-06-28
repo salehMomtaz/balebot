@@ -8,6 +8,8 @@ database.json
 cache/
 *cookies.txt
 cookies.txt
+ytcookies.backup
+*.backup
 
 # Local-only launch script (contains WSL-specific proxy settings)
 run_local.sh

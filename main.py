@@ -130,6 +130,16 @@ def initialize_cookie_jars():
         except Exception as e:
             print(f"[Cookies] Warning: Could not check cookie jar {file_path}: {e}")
 
+    # If YouTube working jar is missing but a protected backup exists, restore it.
+    backup_path = getattr(config, "YT_COOKIES_BACKUP", "ytcookies.backup")
+    if (not os.path.exists(config.YT_COOKIES) or os.path.getsize(config.YT_COOKIES) == 0) and os.path.exists(backup_path) and os.path.getsize(backup_path) > 0:
+        try:
+            shutil.copy(backup_path, config.YT_COOKIES)
+            os.chmod(config.YT_COOKIES, 0o644)
+            print(f"[Cookies] Restored {config.YT_COOKIES} from protected backup.")
+        except Exception as e:
+            print(f"[Cookies] Warning: Could not restore YouTube cookie backup: {e}")
+
 async def auto_clean_cache_directory():
     """Periodically sweeps the cache directory to purge orphaned files older than the configured age."""
     from utils.shared import RUNTIME_SETTINGS

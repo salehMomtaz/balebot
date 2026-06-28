@@ -18,6 +18,7 @@ from utils.gate import (
 from utils.id_validator import is_valid_telegram_id
 from modules.admin.keyboards import get_admin_console_keyboard, get_cookies_menu_keyboard, get_cookie_action_keyboard, back_markup
 from modules.admin.cookies import COOKIE_MAP
+from operators.downloader import get_cookies_for_url
 import utils.shared as shared
 
 admin_router = Router()
@@ -383,6 +384,54 @@ async def callback_admin_cookie_action(callback_query: CallbackQuery, bot: Bot):
         )
         await callback_query.answer()
 
+    elif action == "restore":
+        await callback_query.answer("Restoring from backup...")
+        backup_path = getattr(config, "YT_COOKIES_BACKUP", "ytcookies.backup")
+        if not os.path.exists(backup_path) or os.path.getsize(backup_path) == 0:
+            await callback_query.message.edit_text(
+                text=f"⚠️ No backup found for `{cookie_key}.txt`.",
+                reply_markup=get_cookie_action_keyboard(cookie_key)
+            )
+            return
+        try:
+            shutil.copy(backup_path, file_path)
+            await callback_query.message.edit_text(
+                text=f"✅ Restored `{cookie_key}.txt` from `{backup_path}`.",
+                reply_markup=get_cookie_action_keyboard(cookie_key)
+            )
+            await log_event(f"🍪 *Admin Action:* `{cookie_key}.txt` restored from backup.")
+        except Exception as e:
+            await callback_query.message.edit_text(
+                text=f"❌ Failed to restore backup: {e}",
+                reply_markup=get_cookie_action_keyboard(cookie_key)
+            )
+
+    elif action == "savebackup":
+        await callback_query.answer("Saving backup...")
+        backup_path = getattr(config, "YT_COOKIES_BACKUP", "ytcookies.backup")
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            await callback_query.message.edit_text(
+                text=f"⚠️ `{cookie_key}.txt` is empty. Nothing to backup.",
+                reply_markup=get_cookie_action_keyboard(cookie_key)
+            )
+            return
+        try:
+            # Make backup writable if it was locked, then restore read-only after.
+            if os.path.exists(backup_path):
+                os.chmod(backup_path, 0o644)
+            shutil.copy(file_path, backup_path)
+            os.chmod(backup_path, 0o444)
+            await callback_query.message.edit_text(
+                text=f"✅ Locked `{cookie_key}.txt` as `{backup_path}` (read-only).",
+                reply_markup=get_cookie_action_keyboard(cookie_key)
+            )
+            await log_event(f"🍪 *Admin Action:* `{cookie_key}.txt` saved as protected backup.")
+        except Exception as e:
+            await callback_query.message.edit_text(
+                text=f"❌ Failed to save backup: {e}",
+                reply_markup=get_cookie_action_keyboard(cookie_key)
+            )
+
 @admin_router.callback_query(F.data == "admin_abort_queue")
 async def callback_admin_abort_queue(callback_query: CallbackQuery):
     from utils.shared import queue
@@ -417,12 +466,13 @@ async def _test_cookie_jar(user_id: int, cookie_key: str, file_path: str, bot: B
 
     # Pick a short, age-unrestricted public video that should always have real formats.
     test_url = "https://www.youtube.com/watch?v=jSi2LDkyKmI"
+    cookie_snapshot = get_cookies_for_url(test_url)
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "format": "all",
-        "cookiefile": file_path,
+        "cookiefile": cookie_snapshot,
     }
 
     try:

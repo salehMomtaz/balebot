@@ -44,6 +44,7 @@ REQUESTS_PROXY = PROXY_URL # Used by utils.logger (Bale log channel)
 # Database and Cookie paths
 DB_FILE = "database.json"
 YT_COOKIES = "ytcookies.txt"
+YT_COOKIES_BACKUP = "ytcookies.backup"
 IG_COOKIES = "igcookies.txt"
 TT_COOKIES = "ttcookies.txt"
 X_COOKIES = "xcookies.txt"

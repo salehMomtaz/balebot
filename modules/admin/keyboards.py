@@ -28,9 +28,16 @@ def get_cookies_menu_keyboard() -> InlineKeyboardMarkup:
 
 def get_cookie_action_keyboard(cookie_key: str) -> InlineKeyboardMarkup:
     """Builds action options for selected cookie jars."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧪 Test Jar", callback_data=f"admin_cookie_action:{cookie_key}:test")],
-        [InlineKeyboardButton(text="📤 Download", callback_data=f"admin_cookie_action:{cookie_key}:download")],
+    buttons = [
+        [InlineKeyboardButton(text="🧪 Test Jar", callback_data=f"admin_cookie_action:{cookie_key}:test"),
+         InlineKeyboardButton(text="📤 Download", callback_data=f"admin_cookie_action:{cookie_key}:download")],
         [InlineKeyboardButton(text="✏️ Replace", callback_data=f"admin_cookie_action:{cookie_key}:replace")],
         [InlineKeyboardButton(text="◀️ Back", callback_data="admin_cookies_menu")]
-    ])
+    ]
+    if cookie_key == "ytcookies":
+        buttons[2] = [
+            InlineKeyboardButton(text="🔁 Restore Backup", callback_data=f"admin_cookie_action:{cookie_key}:restore"),
+            InlineKeyboardButton(text="💾 Save as Backup", callback_data=f"admin_cookie_action:{cookie_key}:savebackup"),
+        ]
+        buttons.append([InlineKeyboardButton(text="◀️ Back", callback_data="admin_cookies_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
