@@ -199,6 +199,10 @@ def extract_formats(url: str) -> dict:
         'proxy': getattr(config, 'YTDLP_PROXY', None),
     }
 
+    user_agent = getattr(config, 'YTDLP_USER_AGENT', '')
+    if user_agent:
+        base_opts['user_agent'] = user_agent
+
     info = None
     last_error = None
 
@@ -404,6 +408,10 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
     }
     if cookie_path:
         ydl_opts['cookiefile'] = cookie_path
+
+    user_agent = getattr(config, 'YTDLP_USER_AGENT', '')
+    if user_agent:
+        ydl_opts['user_agent'] = user_agent
 
     if format_type == 'v':
         ydl_opts['format'] = f"{format_id}+bestaudio/best"

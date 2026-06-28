@@ -473,7 +473,11 @@ async def _test_cookie_jar(user_id: int, cookie_key: str, file_path: str, bot: B
         "noplaylist": True,
         "format": "all",
         "cookiefile": cookie_snapshot,
+        "proxy": getattr(config, "YTDLP_PROXY", None),
     }
+    user_agent = getattr(config, "YTDLP_USER_AGENT", "")
+    if user_agent:
+        ydl_opts["user_agent"] = user_agent
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

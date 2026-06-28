@@ -149,6 +149,9 @@ async def youtube_transcript_handler(message: Message, bot: Bot):
                 'cookiefile': get_cookies_for_url(url),
                 'proxy': getattr(config, 'YTDLP_PROXY', None),
             }
+            user_agent = getattr(config, 'YTDLP_USER_AGENT', '')
+            if user_agent:
+                ydl_opts['user_agent'] = user_agent
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=True)
         try:

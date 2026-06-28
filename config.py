@@ -40,6 +40,7 @@ PROXY_URL = _proxy_url()
 AIOHTTP_PROXY = PROXY_URL  # Used by all aiohttp ClientSession calls
 YTDLP_PROXY = PROXY_URL    # Passed to yt-dlp's 'proxy' option
 REQUESTS_PROXY = PROXY_URL # Used by utils.logger (Bale log channel)
+YTDLP_USER_AGENT = os.getenv("YTDLP_USER_AGENT", "")
 
 # Database and Cookie paths
 DB_FILE = "database.json"
