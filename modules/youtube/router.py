@@ -12,7 +12,6 @@ import config
 from utils.shared import queue
 from main import progress_bar_handler, log_event
 from modules.youtube.scraper import clean_vtt_subtitles, search_ytdlp_flat
-from operators.downloader import get_cookies_for_url
 import yt_dlp
 
 youtube_router = Router()
@@ -146,7 +145,7 @@ async def youtube_transcript_handler(message: Message, bot: Bot):
                 'writesubtitles': True,
                 'subtitleslangs': ['en', 'fa', 'auto'],
                 'outtmpl': f"{task_dir}/subtitle",
-                'cookiefile': get_cookies_for_url(url),
+                'cookiefile': config.YT_COOKIES if os.path.exists(config.YT_COOKIES) else None,
                 'proxy': getattr(config, 'YTDLP_PROXY', None),
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

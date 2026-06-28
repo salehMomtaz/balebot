@@ -8,25 +8,8 @@ import ffmpeg
 import config
 import math
 
-_COOKIE_SNAPSHOT_DIR = "cache/cookies"
-
-
-def _cookie_snapshot(original_path: str) -> str | None:
-    """
-    Return a disposable copy of *original_path* for yt-dlp to use.
-    yt-dlp rewrites cookie files on exit; pointing it at a snapshot keeps the
-    original jar uploaded by the admin intact.
-    """
-    if not original_path or not os.path.exists(original_path) or os.path.getsize(original_path) == 0:
-        return None
-    os.makedirs(_COOKIE_SNAPSHOT_DIR, exist_ok=True)
-    snap_path = os.path.join(_COOKIE_SNAPSHOT_DIR, f"{os.path.basename(original_path)}.snapshot")
-    shutil.copy(original_path, snap_path)
-    return snap_path
-
-
 def get_cookies_for_url(url: str) -> str | None:
-    """Return a snapshot of the correct cookie jar for *url*, or None if unavailable."""
+    """Return the correct cookie path based on the domain, falling back to a global cookies.txt file."""
     url_lower = url.lower()
     cookie_path = None
     if "youtube.com" in url_lower or "youtu.be" in url_lower:
@@ -41,7 +24,10 @@ def get_cookies_for_url(url: str) -> str | None:
         # Fallback global cookies file for all other 1,000+ yt-dlp supported sites
         cookie_path = "cookies.txt"
 
-    return _cookie_snapshot(cookie_path)
+    # Only use the cookies if the file exists and is not empty (greater than 0 bytes)
+    if cookie_path and os.path.exists(cookie_path) and os.path.getsize(cookie_path) > 0:
+        return cookie_path
+    return None
 
 def estimate_format_size(fmt: dict, duration_seconds: int) -> int:
     """Estimates the file size of a format in bytes using bitrate or resolution mappings."""
