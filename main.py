@@ -107,6 +107,10 @@ def initialize_cookie_jars():
     Ensure cookie files exist with a Netscape header.
     If a jar already has content, prepend the header when it is missing.
     Never overwrite existing cookies.
+
+    The YouTube working jar is made read-only after init so that yt-dlp cannot
+    corrupt it with write-back. Every yt-dlp invocation receives a snapshot copy
+    from operators/downloader.get_cookies_for_url() instead.
     """
     header = "# Netscape HTTP Cookie File\n"
     cookie_files = [config.YT_COOKIES, config.IG_COOKIES, config.TT_COOKIES, config.X_COOKIES, config.COOKIES_FILE]
@@ -134,11 +138,24 @@ def initialize_cookie_jars():
     backup_path = getattr(config, "YT_COOKIES_BACKUP", "ytcookies.backup")
     if (not os.path.exists(config.YT_COOKIES) or os.path.getsize(config.YT_COOKIES) == 0) and os.path.exists(backup_path) and os.path.getsize(backup_path) > 0:
         try:
+            # Make target writable in case a previous crash left it read-only.
+            if os.path.exists(config.YT_COOKIES):
+                os.chmod(config.YT_COOKIES, 0o644)
             shutil.copy(backup_path, config.YT_COOKIES)
-            os.chmod(config.YT_COOKIES, 0o644)
             print(f"[Cookies] Restored {config.YT_COOKIES} from protected backup.")
         except Exception as e:
             print(f"[Cookies] Warning: Could not restore YouTube cookie backup: {e}")
+
+    # Lock the live jar so yt-dlp can never rewrite it. Admin replace/savebackup
+    # temporarily make it writable when they need to update it.
+    try:
+        # If the file is currently writable (e.g. after a manual edit), force it back.
+        if os.path.exists(config.YT_COOKIES) and os.access(config.YT_COOKIES, os.W_OK):
+            os.chmod(config.YT_COOKIES, 0o644)
+        os.chmod(config.YT_COOKIES, 0o444)
+        print(f"[Cookies] Locked {config.YT_COOKIES} read-only to prevent yt-dlp corruption.")
+    except Exception as e:
+        print(f"[Cookies] Warning: Could not lock {config.YT_COOKIES}: {e}")
 
 async def auto_clean_cache_directory():
     """Periodically sweeps the cache directory to purge orphaned files older than the configured age."""
@@ -213,7 +230,23 @@ async def main_engine():
     dp.include_router(youtube_router)
     dp.include_router(downloader_router)
     dp.include_router(direct_dl_router)
-    
+
+    # 5. Start the PO-token provider if enabled.  Never let a provider failure
+    # crash the bot; we always fall back to cookies / no-auth for YouTube.
+    pot_manager = None
+    if config.YTDLP_POT_ENABLED:
+        from utils.pot_provider import PotProviderManager
+        import utils.shared as shared
+        try:
+            pot_manager = PotProviderManager()
+            await pot_manager.start()
+            shared.pot_manager_instance = pot_manager
+            logging.info(f"[POT] Provider started on 127.0.0.1:{config.YTDLP_POT_PORT}")
+        except Exception as e:
+            logging.error(f"[POT] Failed to start provider: {e}. YouTube downloads will fall back to cookies only.")
+            shared.pot_manager_instance = None
+            pot_manager = None
+
     logging.info("Bale Bot Online.")
     
     # Resolve Log Channel Peer on startup to avoid exceptions
@@ -240,8 +273,14 @@ async def main_engine():
         auto_update_ytdlp(),
         auto_clean_cache_directory()
     ]
+    if pot_manager:
+        tasks.append(pot_manager.health_check_loop())
 
-    await asyncio.gather(*tasks)
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        if pot_manager:
+            await pot_manager.stop()
 
 if __name__ == "__main__":
     try:

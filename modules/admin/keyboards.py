@@ -1,6 +1,7 @@
 # modules/admin/keyboards.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from utils.gate import is_document_mode
+import utils.shared as shared
 
 back_markup = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="◀️ Back to Console", callback_data="admin_main")]
@@ -9,12 +10,27 @@ back_markup = InlineKeyboardMarkup(inline_keyboard=[
 def get_admin_console_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Builds the main Admin Console keyboard with live Doc Mode toggles."""
     doc_status = "✅" if is_document_mode(user_id) else "❌"
+    pot_status = "ON" if shared.is_pot_enabled() else "OFF"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 List Users", callback_data="admin_list"), InlineKeyboardButton(text="➕ Add User", callback_data="admin_add")],
         [InlineKeyboardButton(text="➖ Remove User", callback_data="admin_remove"), InlineKeyboardButton(text="🚫 Blacklist Logs", callback_data="admin_blacklist")],
         [InlineKeyboardButton(text=f"📄 Doc Mode: {doc_status}", callback_data="admin_toggle_doc"), InlineKeyboardButton(text="🍪 Cookie Jars", callback_data="admin_cookies_menu")],
-        [InlineKeyboardButton(text="💥 Abort Transfer", callback_data="admin_abort_queue"), InlineKeyboardButton(text="⚙️ Set Size Limits", callback_data="admin_setlimit")],
+        [InlineKeyboardButton(text=f"🔐 PO Token: {pot_status}", callback_data="admin_pot_menu"), InlineKeyboardButton(text="⚙️ Set Size Limits", callback_data="admin_setlimit")],
+        [InlineKeyboardButton(text="💥 Abort Transfer", callback_data="admin_abort_queue")],
         [InlineKeyboardButton(text="❌ Close Console", callback_data="admin_close")]
+    ])
+
+
+def get_pot_menu_keyboard() -> InlineKeyboardMarkup:
+    """Builds the PO-token settings menu."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🧪 Test Stack", callback_data="admin_pot_action:test"),
+         InlineKeyboardButton(text="🔍 Run Diagnosis", callback_data="admin_pot_action:diagnose")],
+        [InlineKeyboardButton(text="🚀 Start Provider", callback_data="admin_pot_action:start"),
+         InlineKeyboardButton(text="🛑 Stop Provider", callback_data="admin_pot_action:stop")],
+        [InlineKeyboardButton(text="📊 Provider Status", callback_data="admin_pot_action:status"),
+         InlineKeyboardButton(text="🔄 Toggle Enable/Disable", callback_data="admin_pot_action:toggle")],
+        [InlineKeyboardButton(text="◀️ Back to Console", callback_data="admin_main")]
     ])
 
 def get_cookies_menu_keyboard() -> InlineKeyboardMarkup:

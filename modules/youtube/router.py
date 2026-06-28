@@ -152,6 +152,8 @@ async def youtube_transcript_handler(message: Message, bot: Bot):
             user_agent = getattr(config, 'YTDLP_USER_AGENT', '')
             if user_agent:
                 ydl_opts['user_agent'] = user_agent
+            from operators.downloader import _apply_pot_options
+            ydl_opts = _apply_pot_options(ydl_opts, url)
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=True)
         try:

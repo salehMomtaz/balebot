@@ -11,6 +11,25 @@ import math
 _COOKIE_SNAPSHOT_DIR = "cache/cookies"
 
 
+def _purge_cookie_snapshots(original_path: str | None = None) -> None:
+    """
+    Remove disposable yt-dlp snapshot copies so the next download gets a fresh jar.
+    If *original_path* is given, only snapshots derived from it are removed.
+    Call this after any admin action that modifies a cookie jar.
+    """
+    if not os.path.isdir(_COOKIE_SNAPSHOT_DIR):
+        return
+    prefix = None
+    if original_path:
+        prefix = f"{os.path.basename(original_path)}.snapshot"
+    for entry in os.scandir(_COOKIE_SNAPSHOT_DIR):
+        if entry.name.endswith(".snapshot") and (prefix is None or entry.name.startswith(prefix)):
+            try:
+                os.remove(entry.path)
+            except Exception:
+                pass
+
+
 def _cookie_snapshot(original_path: str) -> str | None:
     """
     Return a disposable copy of *original_path* for yt-dlp to use.
@@ -21,7 +40,15 @@ def _cookie_snapshot(original_path: str) -> str | None:
         return None
     os.makedirs(_COOKIE_SNAPSHOT_DIR, exist_ok=True)
     snap_path = os.path.join(_COOKIE_SNAPSHOT_DIR, f"{os.path.basename(original_path)}.snapshot")
+    # If an old read-only snapshot exists, make it writable so we can refresh it.
+    if os.path.exists(snap_path) and not os.access(snap_path, os.W_OK):
+        try:
+            os.chmod(snap_path, 0o644)
+        except Exception:
+            pass
     shutil.copy(original_path, snap_path)
+    # yt-dlp must be able to mutate the snapshot on exit; the original stays locked.
+    os.chmod(snap_path, 0o644)
     return snap_path
 
 
@@ -42,6 +69,119 @@ def get_cookies_for_url(url: str) -> str | None:
         cookie_path = "cookies.txt"
 
     return _cookie_snapshot(cookie_path)
+
+
+def diagnose_youtube_access(test_url: str = "https://www.youtube.com/watch?v=jSi2LDkyKmI") -> dict:
+    """
+    Run three lightweight extraction probes and report how many real formats
+    YouTube returns in each scenario.  This helps decide whether PO tokens are
+    needed for the current IP/cookie combination.
+    """
+    import utils.shared as shared
+
+    def count_real_formats(info: dict | None) -> int:
+        if not info:
+            return 0
+        return len([
+            f for f in info.get("formats", [])
+            if f.get("format_note") != "storyboard" and f.get("ext") != "mhtml"
+        ])
+
+    def extract(opts: dict) -> dict | None:
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(test_url, download=False)
+        except Exception:
+            return None
+
+    base_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "format": "all",
+        "proxy": getattr(config, "YTDLP_PROXY", None),
+    }
+    user_agent = getattr(config, "YTDLP_USER_AGENT", "")
+    if user_agent:
+        base_opts["user_agent"] = user_agent
+
+    # 1) No auth at all
+    no_auth = extract(dict(base_opts))
+
+    # 2) Cookies only
+    cookie_path = get_cookies_for_url(test_url)
+    cookie_opts = dict(base_opts)
+    if cookie_path:
+        cookie_opts["cookiefile"] = cookie_path
+    cookies_only = extract(cookie_opts)
+
+    # 3) Full stack: cookies + PO token + mweb
+    original_pot = shared.is_pot_enabled()
+    shared.set_pot_enabled(True)
+    try:
+        full_opts = _apply_pot_options(dict(base_opts), test_url)
+        if cookie_path:
+            full_opts["cookiefile"] = cookie_path
+        full_stack = extract(full_opts)
+    finally:
+        shared.set_pot_enabled(original_pot)
+
+    no_auth_count = count_real_formats(no_auth)
+    cookies_count = count_real_formats(cookies_only)
+    full_count = count_real_formats(full_stack)
+
+    if full_count > 0:
+        recommendation = "PO-token support works. Enable YTDLP_POT_ENABLED=true."
+    elif cookies_count > 0:
+        recommendation = "Cookies are sufficient; PO tokens are not needed."
+    else:
+        recommendation = (
+            "YouTube is blocking this IP even with PO tokens. "
+            "Try warmer cookies, a different IP, or a proxy."
+        )
+
+    return {
+        "no_auth_count": no_auth_count,
+        "cookies_count": cookies_count,
+        "full_count": full_count,
+        "recommendation": recommendation,
+    }
+def _is_youtube(url: str) -> bool:
+    """Return True if *url* is a YouTube video."""
+    if not url:
+        return False
+    lower = url.lower()
+    return "youtube.com" in lower or "youtu.be" in lower
+
+
+def _apply_pot_options(ydl_opts: dict, url: str) -> dict:
+    """Inject bgutil HTTP PO-token provider options for YouTube when available."""
+    import utils.shared as shared
+    if not _is_youtube(url) or not shared.is_pot_enabled():
+        return ydl_opts
+
+    if not getattr(shared, "POT_AVAILABLE", False):
+        # Graceful degradation: log once and continue without PO token. The
+        # fallback extraction chain (cookies -> no-auth) still has a chance.
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "[POT] PO-token support is enabled but the provider is not running. "
+            "Start it from Admin Console -> PO Token, or set YTDLP_POT_ENABLED=false."
+        )
+        return ydl_opts
+
+    opts = dict(ydl_opts)
+    opts.setdefault("extractor_args", {})
+    opts["extractor_args"]["youtubepot-bgutilhttp"] = {
+        "base_url": [f"http://127.0.0.1:{config.YTDLP_POT_PORT}"]
+    }
+    player_client = getattr(config, "YTDLP_POT_PLAYER_CLIENT", "mweb") or "mweb"
+    opts["extractor_args"]["youtube"] = {
+        "player_client": [player_client]
+    }
+    # Required for BotGuard n-challenge solving
+    opts["js_runtimes"] = {"node": {}}
+    return opts
 
 def estimate_format_size(fmt: dict, duration_seconds: int) -> int:
     """Estimates the file size of a format in bytes using bitrate or resolution mappings."""
@@ -188,6 +328,8 @@ def _storyboard_error(cookie_path: str | None) -> RuntimeError:
 
 
 def extract_formats(url: str) -> dict:
+    import utils.shared as shared
+
     _ensure_disk_space(os.getcwd())
     cookie_path = get_cookies_for_url(url)
 
@@ -203,35 +345,70 @@ def extract_formats(url: str) -> dict:
     if user_agent:
         base_opts['user_agent'] = user_agent
 
+    # Build the strategy ladder.  Order matters for flagged IPs:
+    #   1) cookies + PO token (best chance when the IP is flagged)
+    #   2) cookies only (fast path when cookies are warm)
+    #   3) no auth at all (last resort)
+    original_pot = shared.is_pot_enabled()
+    strategies = []
+    if cookie_path:
+        if original_pot:
+            strategies.append(("cookies+pot", True))
+        strategies.append(("cookies", False))
+    strategies.append(("no-auth", None))
+
     info = None
     last_error = None
+    tried_pot = False
 
-    # Strategy 1: use cookies if available
-    if cookie_path:
-        ydl_opts = {**base_opts, 'cookiefile': cookie_path}
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-        except Exception as e:
-            last_error = e
+    for label, pot_state in strategies:
+        # Temporarily flip the runtime POT toggle when comparing strategies.
+        # None means "leave the global setting alone" (used for no-auth).
+        if pot_state is not None:
+            shared.set_pot_enabled(pot_state)
+        if label == "cookies+pot":
+            tried_pot = True
 
-    # Strategy 2: retry without cookies (stale/bot-flagged jars can poison extraction)
-    if info is None:
         ydl_opts = dict(base_opts)
+        if label != "no-auth" and cookie_path:
+            ydl_opts['cookiefile'] = cookie_path
+        ydl_opts = _apply_pot_options(ydl_opts, url)
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
         except Exception as e:
             last_error = e
+            info = None
+        finally:
+            if pot_state is not None:
+                shared.set_pot_enabled(original_pot)
+
+        if info is None:
+            continue
+
+        if _is_live_or_storyboard_only(info):
+            # Cookies were accepted but YouTube is withholding real formats.
+            # Treat this as a failure and fall back to the next strategy.
+            last_error = _storyboard_error(cookie_path if label != "no-auth" else None)
+            info = None
+            continue
+
+        # Real formats found; stop climbing the ladder.
+        break
 
     if info is None:
+        # If PO token was requested but never actually tried (provider unavailable),
+        # make the error message actionable instead of a generic failure.
+        if tried_pot and original_pot and not getattr(shared, "POT_AVAILABLE", False):
+            raise RuntimeError(
+                "PO-token support is enabled but the provider is not running. "
+                "Start it from Admin Console → PO Token, or run the build manually."
+            )
         raise RuntimeError(f"Extraction failed: {_classify_ytdl_error(last_error, url)}")
 
     duration_seconds = info.get('duration', 0)
     formats = info.get('formats', [])
-
-    if _is_live_or_storyboard_only(info):
-        raise _storyboard_error(cookie_path)
 
     video_options = []
     audio_options = []
@@ -412,6 +589,8 @@ def download_media(url: str, format_id: str, format_type: str, cache_id: str, pr
     user_agent = getattr(config, 'YTDLP_USER_AGENT', '')
     if user_agent:
         ydl_opts['user_agent'] = user_agent
+
+    ydl_opts = _apply_pot_options(ydl_opts, url)
 
     if format_type == 'v':
         ydl_opts['format'] = f"{format_id}+bestaudio/best"

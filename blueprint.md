@@ -10,8 +10,9 @@ A private, multi-functional Telegram/Bale bot for downloading media, browsing Gi
 |---|---|---|
 | Runtime | Python 3.12 venv | No Docker required; see `run.sh` for safe startup |
 | Bot Framework | aiogram 3.12.0 | Redirected to `https://tapi.bale.ai` |
-| Media Extraction | yt-dlp (auto-updated nightly) | Cookie-aware per-domain |
+| Media Extraction | yt-dlp (auto-updated nightly) | Cookie-aware per-domain; optional PO-token provider for flagged YouTube IPs |
 | Post-processing | FFmpeg 6.x | Thumbnails, metadata embedding, splitting |
+| PO Token Provider | Node.js bgutil HTTP server | Localhost-only subprocess managed by `utils/pot_provider.py` |
 | Web server | FastAPI + uvicorn | Optional, currently not the primary interface |
 | Queue | In-memory `DownloadQueue` | Sequential worker, max 20 queued jobs |
 | Logging | Root logger + two handlers | Bale channel (`LOG_CHANNEL_ID`) + local `logs/bot.log` |
@@ -119,8 +120,15 @@ Loaded from `.env` via `python-dotenv`:
 | `LOG_CHANNEL_ID` | Numeric channel ID for log mirroring |
 | `GITHUB_TOKEN` | GitHub PAT for API calls |
 | `SOCKS5_PROXY` / `ALL_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY` | Optional proxy for yt-dlp/aiohttp/requests |
+| `YTDLP_USER_AGENT` | Browser User-Agent string to pair with cookies |
+| `YTDLP_POT_ENABLED` | Enable the local PO-token provider for flagged YouTube IPs (`true`/`false`) |
+| `YTDLP_POT_PORT` | Local port for the bgutil PO-token provider (default `4416`) |
+| `YTDLP_POT_PROVIDER_PATH` | Path to `bgutil-provider/server` (default: built-in) |
+| `YTDLP_POT_PLUGIN_PATH` | Path to `bgutil-provider/plugin` (default: built-in) |
 
 Cookie file paths are fixed relative filenames: `ytcookies.txt`, `igcookies.txt`, `ttcookies.txt`, `xcookies.txt`, `cookies.txt`.
+
+**Cookie jar protection:** The live `ytcookies.txt` is locked read-only after bot startup. yt-dlp receives a writable snapshot copy, so it can never rewrite or corrupt the uploaded jar. Admin replace/restore/savebackup handlers unlock the file briefly, update it, then re-lock it.
 
 ---
 
@@ -134,6 +142,7 @@ Features:
 - Toggle document mode
 - Set runtime limits (`bale_hard_limit_mb`, `split_target_mb`, `binary_chunk_mb`, `max_cache_age_hours`)
 - Cookie jar browser: download current jar or replace by uploading a `.txt` document
+- PO-token provider control: diagnose YouTube access, test full stack, toggle on/off
 - Abort queue
 
 ---
@@ -155,6 +164,7 @@ Features:
 - **Run in tmux/screen:** Use `./run.sh` inside a tmux session so the bot survives SSH disconnect.
 - **Logs:** Every log sent to the Bale channel is also written to `logs/bot.log` (rotated at 5 MB, 3 backups).
 - **Cookies:** YouTube frequently challenges VPS IPs. If downloads fail with "Sign in to confirm you're not a bot", upload a fresh `ytcookies.txt` from a logged-in browser via Admin Console → Cookies.
+- **PO Tokens:** If fresh cookies still yield only storyboards, set `YTDLP_POT_ENABLED=true`, ensure Node.js ≥ 20 is installed, and use Admin Console → PO Token → Run Diagnosis.
 - **yt-dlp:** Auto-updated every 6 hours via `utils/updater.py`.
 
 ---
@@ -173,3 +183,4 @@ Features:
 - [x] Direct URL downloader
 - [x] Ubuntu 24.04 VPS native run script (`run.sh`)
 - [x] Optional Docker files retained for users who prefer containers
+- [x] YouTube PO-token provider integration (bgutil + mweb client)

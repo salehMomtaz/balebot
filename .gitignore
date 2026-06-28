@@ -23,5 +23,8 @@ __pycache__/
 venv/
 .env
 
+# PO-token provider (auto-cloned by run.sh; do not commit)
+bgutil-provider/
+
 # Documentation / IDE artifacts
 apidocument/

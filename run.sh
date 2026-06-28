@@ -20,6 +20,14 @@ ulimit -f 20971520      # max file size (KB) ~ 20 GB
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 
+# Load environment variables from .env so shell checks (e.g. YTDLP_POT_ENABLED) work.
+if [[ -f ".env" ]]; then
+    # shellcheck source=/dev/null
+    set -a
+    source .env
+    set +a
+fi
+
 # Ensure a virtual environment exists
 if [[ ! -d "venv" ]]; then
     echo "[run.sh] Virtual environment not found. Creating venv..."
@@ -32,6 +40,29 @@ pip install -q -r requirements.txt
 
 # Ensure runtime directories exist
 mkdir -p logs cache
+
+# Clone the PO-token provider if it is missing and PO tokens are enabled.
+if [[ "${YTDLP_POT_ENABLED:-false}" == "true" ]] && [[ ! -d "bgutil-provider" ]]; then
+    if command -v git >/dev/null 2>&1; then
+        echo "[run.sh] PO-token provider missing. Cloning bgutil-ytdlp-pot-provider..."
+        git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git bgutil-provider
+    else
+        echo "[run.sh] WARNING: git not found. Cannot clone PO-token provider automatically."
+    fi
+fi
+
+# Node.js check (required for the PO-token provider)
+if ! command -v node >/dev/null 2>&1; then
+    echo "[run.sh] WARNING: Node.js not found. YouTube PO-token support will be disabled."
+    echo "[run.sh] To enable, install Node.js >= 20: sudo apt-get install -y nodejs"
+else
+    NODE_MAJOR=$(node -p 'process.version.match(/^v(\d+)/)[1]')
+    if [ "$NODE_MAJOR" -lt 20 ]; then
+        echo "[run.sh] WARNING: Node.js $NODE_MAJOR found; provider requires Node >= 20."
+    else
+        echo "[run.sh] Node.js $(node -p 'process.version') detected."
+    fi
+fi
 
 # Warn if disk is getting full
 python3 - <<'PY'

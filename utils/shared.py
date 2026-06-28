@@ -22,6 +22,27 @@ RUNTIME_SETTINGS = {
 MAX_QUEUE_DEPTH = 20            # Reject new jobs if queue grows beyond this
 MIN_FREE_DISK_GB = 1            # Minimum free space headroom in GB
 
+# --- Runtime PO-token toggle (admin console can override without restart) ---
+OVERRIDE_POT_ENABLED = None
+
+# --- PO-token provider availability (set by PotProviderManager) ---
+POT_AVAILABLE = False
+pot_manager_instance = None
+
+
+def is_pot_enabled() -> bool:
+    """Return True if PO-token support should be active for YouTube downloads."""
+    import config
+    if OVERRIDE_POT_ENABLED is not None:
+        return OVERRIDE_POT_ENABLED
+    return getattr(config, "YTDLP_POT_ENABLED", False)
+
+
+def set_pot_enabled(enabled: bool) -> None:
+    """Set a runtime override for PO-token support. Persists until bot restart."""
+    global OVERRIDE_POT_ENABLED
+    OVERRIDE_POT_ENABLED = bool(enabled)
+
 
 def get_setting_bytes(key: str) -> int:
     """Return a RUNTIME_SETTINGS value (stored in MB) as bytes."""

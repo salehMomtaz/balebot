@@ -16,9 +16,15 @@ from utils.gate import (
     toggle_document_mode
 )
 from utils.id_validator import is_valid_telegram_id
-from modules.admin.keyboards import get_admin_console_keyboard, get_cookies_menu_keyboard, get_cookie_action_keyboard, back_markup
+from modules.admin.keyboards import (
+    get_admin_console_keyboard,
+    get_cookies_menu_keyboard,
+    get_cookie_action_keyboard,
+    get_pot_menu_keyboard,
+    back_markup,
+)
 from modules.admin.cookies import COOKIE_MAP
-from operators.downloader import get_cookies_for_url
+from operators.downloader import get_cookies_for_url, diagnose_youtube_access, _purge_cookie_snapshots
 import utils.shared as shared
 
 admin_router = Router()
@@ -219,8 +225,17 @@ async def admin_cookie_replace_document_handler(message: Message, bot: Bot):
         content = f"# Netscape HTTP Cookie File\n{content}"
 
     try:
+        # The YouTube jar is kept read-only to stop yt-dlp from corrupting it.
+        # Unlock briefly, write the new jar, then lock it again.
+        if cookie_key == "ytcookies" and os.path.exists(file_path):
+            os.chmod(file_path, 0o644)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
+        if cookie_key == "ytcookies":
+            os.chmod(file_path, 0o444)
+        # Purge any stale yt-dlp snapshot copies so the next download picks up
+        # the freshly uploaded jar instead of a cached old snapshot.
+        _purge_cookie_snapshots(file_path)
         await bot.send_message(chat_id=user_id, text=f"✅ `{cookie_key}.txt` successfully replaced from document!", reply_markup=back_markup)
         await log_event(f"🍪 *Admin Action:* Cookie profile `{cookie_key}.txt` was replaced via document.")
     except Exception as e:
@@ -394,7 +409,13 @@ async def callback_admin_cookie_action(callback_query: CallbackQuery, bot: Bot):
             )
             return
         try:
+            # The working jar is locked read-only; unlock before overwriting.
+            if os.path.exists(file_path):
+                os.chmod(file_path, 0o644)
             shutil.copy(backup_path, file_path)
+            os.chmod(file_path, 0o444)
+            # Purge stale snapshots so the restored jar is used immediately.
+            _purge_cookie_snapshots(file_path)
             await callback_query.message.edit_text(
                 text=f"✅ Restored `{cookie_key}.txt` from `{backup_path}`.",
                 reply_markup=get_cookie_action_keyboard(cookie_key)
@@ -421,6 +442,8 @@ async def callback_admin_cookie_action(callback_query: CallbackQuery, bot: Bot):
                 os.chmod(backup_path, 0o644)
             shutil.copy(file_path, backup_path)
             os.chmod(backup_path, 0o444)
+            # Purge snapshots so the backup change is respected on next run.
+            _purge_cookie_snapshots(file_path)
             await callback_query.message.edit_text(
                 text=f"✅ Locked `{cookie_key}.txt` as `{backup_path}` (read-only).",
                 reply_markup=get_cookie_action_keyboard(cookie_key)
@@ -452,7 +475,133 @@ async def callback_admin_close(callback_query: CallbackQuery):
     await callback_query.answer("Console closed.")
 
 
-async def _test_cookie_jar(user_id: int, cookie_key: str, file_path: str, bot: Bot):
+# =========================================================================
+# PO Token Provider Handlers
+# =========================================================================
+
+@admin_router.callback_query(F.data == "admin_pot_menu")
+async def callback_admin_pot_menu(callback_query: CallbackQuery):
+    manager = getattr(shared, 'pot_manager_instance', None)
+    running = manager.is_running() if manager else False
+    await callback_query.message.edit_text(
+        text=(
+            "🔐 *PO Token Provider*\n\n"
+            "Use this menu when YouTube blocks downloads from this VPS IP.\n\n"
+            f"• Enabled in config/admin: *{'YES' if shared.is_pot_enabled() else 'NO'}*\n"
+            f"• Provider running: *{'YES' if running else 'NO'}*\n"
+            f"• Provider available: *{'YES' if getattr(shared, 'POT_AVAILABLE', False) else 'NO'}*\n\n"
+            "• *Test Stack* — try a live extraction with the full stack.\n"
+            "• *Run Diagnosis* — compare no-auth / cookies-only / full-stack.\n"
+            "• *Start Provider* — build and launch the Node server.\n"
+            "• *Stop Provider* — shut the Node server down.\n"
+            "• *Toggle* — enable or disable PO-token injection without restart."
+        ),
+        reply_markup=get_pot_menu_keyboard(),
+    )
+    await callback_query.answer()
+
+
+@admin_router.callback_query(F.data.startswith("admin_pot_action:"))
+async def callback_admin_pot_action(callback_query: CallbackQuery, bot: Bot):
+    from main import log_event
+    user_id = callback_query.from_user.id
+    action = callback_query.data.split(":")[1]
+
+    if action == "toggle":
+        new_state = not shared.is_pot_enabled()
+        shared.set_pot_enabled(new_state)
+        status = "ENABLED" if new_state else "DISABLED"
+        await callback_query.answer(f"PO Token {status}", show_alert=True)
+        await callback_query.message.edit_reply_markup(reply_markup=get_pot_menu_keyboard())
+        await log_event(f"🔐 *Admin Action:* PO Token provider toggled {status} by admin.")
+        return
+
+    if action == "start":
+        await callback_query.answer("Starting provider...")
+        manager = getattr(shared, 'pot_manager_instance', None)
+        if manager and manager.is_running():
+            await callback_query.message.edit_text(
+                text="🚀 Provider is already running.",
+                reply_markup=get_pot_menu_keyboard(),
+            )
+            return
+        try:
+            from utils.pot_provider import PotProviderManager
+            manager = manager or PotProviderManager()
+            await manager.start()
+            shared.pot_manager_instance = manager
+            shared.POT_AVAILABLE = True
+            text = (
+                "🚀 *PO Token Provider Started*\n\n"
+                f"Listening on `127.0.0.1:{config.YTDLP_POT_PORT}`.\n"
+                "Downloads will now use cookies + PO token."
+            )
+            await log_event("🔐 *Admin Action:* PO Token provider started from admin console.")
+        except Exception as e:
+            shared.POT_AVAILABLE = False
+            text = (
+                f"❌ *Failed to start provider:*\n`{e}`\n\n"
+                "Make sure Node.js ≥ 20 is installed and the provider is built:\n"
+                "`cd bgutil-provider && npm ci && npm exec tsc`"
+            )
+        await callback_query.message.edit_text(text=text, reply_markup=get_pot_menu_keyboard())
+        return
+
+    if action == "stop":
+        await callback_query.answer("Stopping provider...")
+        manager = getattr(shared, 'pot_manager_instance', None)
+        if manager:
+            await manager.stop()
+        shared.POT_AVAILABLE = False
+        await callback_query.message.edit_text(
+            text="🛑 *PO Token Provider Stopped*.\nDownloads will fall back to cookies / no-auth.",
+            reply_markup=get_pot_menu_keyboard(),
+        )
+        await log_event("🔐 *Admin Action:* PO Token provider stopped from admin console.")
+        return
+
+    if action == "status":
+        manager = getattr(shared, 'pot_manager_instance', None)
+        running = manager.is_running() if manager else False
+        await callback_query.answer(
+            f"Enabled: {'YES' if shared.is_pot_enabled() else 'NO'}\n"
+            f"Running: {'YES' if running else 'NO'}\n"
+            f"Available: {'YES' if getattr(shared, 'POT_AVAILABLE', False) else 'NO'}",
+            show_alert=True,
+        )
+        return
+
+    if action == "diagnose":
+        await callback_query.answer("Running diagnosis...")
+        await callback_query.message.edit_text(
+            text="🔍 *Running YouTube access diagnosis...*\nThis may take up to 30 seconds.",
+            reply_markup=get_pot_menu_keyboard(),
+        )
+        try:
+            report = await bot.loop.run_in_executor(None, diagnose_youtube_access)
+            text = (
+                "🔍 *YouTube Access Diagnosis*\n\n"
+                f"• No auth: `{report['no_auth_count']}` real formats\n"
+                f"• Cookies only: `{report['cookies_count']}` real formats\n"
+                f"• Cookies + PO token + mweb: `{report['full_count']}` real formats\n\n"
+                f"*Recommendation:* {report['recommendation']}"
+            )
+        except Exception as e:
+            text = f"❌ *Diagnosis failed:*\n`{e}`"
+        await callback_query.message.edit_text(text=text, reply_markup=get_pot_menu_keyboard())
+        return
+
+    if action == "test":
+        await callback_query.answer("Testing full stack...")
+        await callback_query.message.edit_text(
+            text="🧪 *Testing cookies + PO-token stack...*",
+            reply_markup=get_pot_menu_keyboard(),
+        )
+        await _test_cookie_jar(user_id, "ytcookies", COOKIE_MAP["ytcookies"], bot, force_pot=True)
+        return
+
+
+async def _test_cookie_jar(user_id: int, cookie_key: str, file_path: str, bot: Bot, force_pot: bool = False):
     """Run a lightweight yt-dlp extraction on a known public video and report format availability."""
     from main import log_event
 
@@ -479,7 +628,12 @@ async def _test_cookie_jar(user_id: int, cookie_key: str, file_path: str, bot: B
     if user_agent:
         ydl_opts["user_agent"] = user_agent
 
+    from operators.downloader import _apply_pot_options
+    original_pot = shared.is_pot_enabled()
+    if force_pot:
+        shared.set_pot_enabled(True)
     try:
+        ydl_opts = _apply_pot_options(ydl_opts, test_url)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(test_url, download=False)
     except Exception as exc:
@@ -494,6 +648,8 @@ async def _test_cookie_jar(user_id: int, cookie_key: str, file_path: str, bot: B
             reply_markup=back_markup,
         )
         return
+    finally:
+        shared.set_pot_enabled(original_pot)
 
     formats = info.get("formats", [])
     real_formats = [
@@ -514,10 +670,11 @@ async def _test_cookie_jar(user_id: int, cookie_key: str, file_path: str, bot: B
             if len(samples) >= 6:
                 break
         summary = "\n".join(samples)
+        pot_label = " (with PO token)" if force_pot else ""
         await bot.send_message(
             chat_id=user_id,
             text=(
-                f"✅ *Cookie Test Passed for `{cookie_key}.txt`*\n\n"
+                f"✅ *Cookie Test Passed{pot_label} for `{cookie_key}.txt`*\n\n"
                 f"YouTube returned {len(real_formats)} downloadable formats.\n"
                 f"Sample formats:\n{summary}\n\n"
                 f"The jar is working — try your link again."

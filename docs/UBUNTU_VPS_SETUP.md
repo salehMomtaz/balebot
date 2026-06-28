@@ -86,12 +86,16 @@ BALE_TOKEN=1234567890:YourActualBaleTokenHere
 SYSTEM_CREATOR_ID=YourNumericUserID
 LOG_CHANNEL_ID=YourNumericChannelID
 GITHUB_TOKEN=ghp_YourGitHubTokenHere
+YTDLP_POT_ENABLED=false
+YTDLP_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36
 ```
 
 - `BALE_TOKEN`: from @BotFather.
 - `SYSTEM_CREATOR_ID`: your numeric Bale user ID.
 - `LOG_CHANNEL_ID`: numeric ID of the private channel where logs go.
 - `GITHUB_TOKEN`: optional; leave blank if you do not use GitHub features.
+- `YTDLP_POT_ENABLED`: set to `true` if YouTube blocks this VPS IP even with cookies (see Step 11).
+- `YTDLP_USER_AGENT`: optional browser User-Agent to pair with your cookies.
 
 Save and exit: `Ctrl+O`, `Enter`, `Ctrl+X`.
 
@@ -227,9 +231,73 @@ You must upload fresh cookies:
 
 After replacing, try the YouTube link again.
 
+> **Cookie jar protection:** The live `ytcookies.txt` is kept read-only while the bot is running. yt-dlp always works on a disposable snapshot, so it can never corrupt your uploaded jar. Use Admin Console → Cookies → `ytcookies.txt` → **Save as Backup** to lock a known-good jar as `ytcookies.backup`.
+
 ---
 
-## Step 11: Useful commands
+## Step 11: PO-token setup (if cookies alone are not enough)
+
+Some VPS IPs are heavily flagged by YouTube. If fresh cookies still give:
+
+```text
+No downloadable formats found.
+```
+
+or only storyboard formats, enable the PO-token provider:
+
+1. Make sure Node.js >= 20 is installed:
+
+   ```bash
+   sudo apt-get install -y nodejs
+   node -v
+   ```
+
+   You should see `v20` or higher.
+
+2. Open `.env`:
+
+   ```bash
+   nano .env
+   ```
+
+3. Add this line:
+
+   ```env
+   YTDLP_POT_ENABLED=true
+   ```
+
+4. Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
+
+5. Restart the bot:
+
+   ```bash
+   tmux kill-session -t balebot
+   tmux new-session -s balebot
+   cd ~/balebot
+   ./run.sh
+   # Detach with Ctrl+B then D
+   ```
+
+The provider source is cloned automatically by `run.sh` on first start when `YTDLP_POT_ENABLED=true`. The build (`npm ci` + `tsc`) happens automatically inside `bgutil-provider/server`; this may take a minute on first start.
+
+> Do not commit `bgutil-provider/` to git. It is listed in `.gitignore` and managed locally.
+
+---
+
+## Step 12: Verify PO-token support
+
+In Bale, open Admin Console and tap **PO Token**.
+
+1. Tap **Run Diagnosis**. It compares three scenarios and tells you which one works.
+2. If the diagnosis shows real formats only for "Cookies + PO token + mweb", the setup is correct.
+3. Tap **Test Stack** to confirm a live extraction works.
+4. Now send a YouTube link and choose a format.
+
+If the diagnosis shows `0` real formats for all scenarios, this VPS IP is fully blocked even with PO tokens. Try a proxy, a different server, or warmer cookies.
+
+---
+
+## Step 13: Useful commands
 
 | Task | Command |
 |---|---|
@@ -243,11 +311,17 @@ After replacing, try the YouTube link again.
 
 ---
 
-## Troubleshooting
+## Step 14: Troubleshooting
+
+### "Sign in to confirm you're not a bot"
+
+- Upload fresh cookies (Step 10).
+- If it persists, enable PO tokens (Step 11).
 
 ### "No downloadable formats found"
 
 - YouTube may require fresh cookies (see Step 10).
+- The VPS IP may be flagged; enable PO tokens (Step 11) and run the diagnosis.
 - The link may be an ended live stream with only storyboards.
 - The video may be region-blocked or members-only.
 
@@ -267,6 +341,13 @@ After replacing, try the YouTube link again.
 - Clear old logs: `rm ~/balebot/logs/bot.log.*`
 - Clear cache manually: `rm -rf ~/balebot/cache/*`
 - Add more disk space from your VPS provider.
+
+### PO-token provider errors in logs
+
+- Confirm Node.js version: `node -v` should be `v20+`.
+- Confirm `YTDLP_POT_ENABLED=true` is in `.env`.
+- Check `logs/bot.log` for `[POT]` messages.
+- Run Admin Console → PO Token → Run Diagnosis.
 
 ---
 

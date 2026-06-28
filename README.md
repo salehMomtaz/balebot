@@ -3,9 +3,10 @@
 A private, multi-functional [Bale](https://bale.ai) bot for media downloads, GitHub browsing, translation, and admin-managed access.
 
 - Download videos/audio from YouTube, Instagram, TikTok, X/Twitter, and direct URLs.
+- Optional PO-token support for YouTube downloads on flagged VPS IPs.
 - Browse GitHub repositories, download ZIPs, view branches/tags/releases.
 - Translate text with Google Translate.
-- Creator-only admin console for users, settings, and cookie jars.
+- Creator-only admin console for users, settings, cookie jars, and PO-token diagnosis.
 - Runs directly on Ubuntu 24.04 inside a Python venv — no Docker required.
 
 ## Quick Start
