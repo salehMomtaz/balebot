@@ -5,6 +5,7 @@ import logging
 import io
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message, ForceReply
+import yt_dlp
 import config
 from utils.gate import (
     load_database,
@@ -363,7 +364,11 @@ async def callback_admin_cookie_action(callback_query: CallbackQuery, bot: Bot):
             )
         else:
             await callback_query.answer("⚠️ File is empty or does not exist yet.", show_alert=True)
-            
+
+    elif action == "test":
+        await callback_query.answer("Testing jar...")
+        await _test_cookie_jar(user_id, cookie_key, file_path, bot)
+
     elif action == "replace":
         USER_STATES[user_id] = f"waiting_for_replace_{cookie_key}"
         ACTIVE_PROMPTS[user_id] = callback_query.message.message_id
@@ -396,3 +401,85 @@ async def callback_admin_close(callback_query: CallbackQuery):
     USER_STATES.pop(user_id, None)
     await callback_query.message.delete()
     await callback_query.answer("Console closed.")
+
+
+async def _test_cookie_jar(user_id: int, cookie_key: str, file_path: str, bot: Bot):
+    """Run a lightweight yt-dlp extraction on a known public video and report format availability."""
+    from main import log_event
+
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        await bot.send_message(
+            chat_id=user_id,
+            text=f"⚠️ `{cookie_key}.txt` is empty or missing. Nothing to test.",
+            reply_markup=back_markup,
+        )
+        return
+
+    # Pick a short, age-unrestricted public video that should always have real formats.
+    test_url = "https://www.youtube.com/watch?v=jSi2LDkyKmI"
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "format": "all",
+        "cookiefile": file_path,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(test_url, download=False)
+    except Exception as exc:
+        await bot.send_message(
+            chat_id=user_id,
+            text=(
+                f"❌ *Cookie Test Failed for `{cookie_key}.txt`*\n\n"
+                f"yt-dlp could not extract anything using this jar.\n"
+                f"Error: `{exc}`\n\n"
+                f"Please upload a fresh cookie jar from a browser where YouTube plays normally."
+            ),
+            reply_markup=back_markup,
+        )
+        return
+
+    formats = info.get("formats", [])
+    real_formats = [
+        f for f in formats
+        if f.get("format_note") != "storyboard" and f.get("ext") != "mhtml"
+    ]
+
+    if real_formats:
+        samples = []
+        seen = set()
+        for f in real_formats:
+            note = f.get("format_note") or "?"
+            ext = f.get("ext") or "?"
+            key = (note, ext)
+            if key not in seen:
+                seen.add(key)
+                samples.append(f"• `{note}` ({ext})")
+            if len(samples) >= 6:
+                break
+        summary = "\n".join(samples)
+        await bot.send_message(
+            chat_id=user_id,
+            text=(
+                f"✅ *Cookie Test Passed for `{cookie_key}.txt`*\n\n"
+                f"YouTube returned {len(real_formats)} downloadable formats.\n"
+                f"Sample formats:\n{summary}\n\n"
+                f"The jar is working — try your link again."
+            ),
+            reply_markup=back_markup,
+        )
+        await log_event(f"🧪 *Admin Action:* Cookie jar `{cookie_key}.txt` passed live test ({len(real_formats)} formats).")
+    else:
+        await bot.send_message(
+            chat_id=user_id,
+            text=(
+                f"⚠️ *Cookie Test Warning for `{cookie_key}.txt`*\n\n"
+                f"YouTube accepted the cookies, but only returned storyboard/preview formats.\n\n"
+                f"This means the jar is *bot-flagged, expired, or from an account that cannot watch videos*.\n"
+                f"Please upload a fresh `ytcookies.txt` from a browser where you can actually play YouTube videos."
+            ),
+            reply_markup=back_markup,
+        )
+        await log_event(f"⚠️ *Admin Action:* Cookie jar `{cookie_key}.txt` failed live test (storyboard-only).")

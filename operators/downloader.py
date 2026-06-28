@@ -148,7 +148,7 @@ def _classify_ytdl_error(exc: Exception, url: str) -> str:
 
 
 def _is_live_or_storyboard_only(info: dict) -> bool:
-    """Return True if the only formats are storyboards/previews (ended live stream)."""
+    """Return True if the only formats are storyboards/previews."""
     formats = info.get("formats", [])
     if not formats:
         return True
@@ -157,6 +157,20 @@ def _is_live_or_storyboard_only(info: dict) -> bool:
         if f.get("format_note") != "storyboard" and f.get("ext") != "mhtml"
     ]
     return len(non_storyboard) == 0
+
+
+def _storyboard_error(cookie_path: str | None) -> RuntimeError:
+    """Build a clear error when yt-dlp returns only storyboards/previews."""
+    if cookie_path:
+        return RuntimeError(
+            "YouTube accepted the cookies but only returned preview/storyboard formats. "
+            "This means the cookie jar is bot-flagged, expired, or from an account that cannot watch videos. "
+            "Please upload a fresh `ytcookies.txt` from a browser where you can actually play YouTube videos."
+        )
+    return RuntimeError(
+        "YouTube is requiring sign-in from this server and no valid cookies were found. "
+        "Please upload a `ytcookies.txt` jar via Admin Console → Cookies."
+    )
 
 
 def extract_formats(url: str) -> dict:
@@ -199,10 +213,7 @@ def extract_formats(url: str) -> dict:
     formats = info.get('formats', [])
 
     if _is_live_or_storyboard_only(info):
-        raise RuntimeError(
-            "This stream has ended or only preview/storyboard formats are available. "
-            "There is nothing downloadable."
-        )
+        raise _storyboard_error(cookie_path)
 
     video_options = []
     audio_options = []
